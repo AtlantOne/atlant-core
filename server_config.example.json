@@ -1,0 +1,12 @@
+{
+  "listen": ":1026",
+  "wire_version": 7,
+  "legacy_wire": false,
+  "sni": "www.microsoft.com",
+  "users_file": "users.db",
+  "server_key_file": "atlant_server_key.bin",
+  "api_addr": "127.0.0.1:8080",
+  "api_secret": "YOUR_RANDOM_API_SECRET",
+  "log_level": "info",
+  "subscriptions": { "enabled": false }
+}

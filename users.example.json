@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "users": {
+    "example_user": {
+      "name": "example_user",
+      "pbk": "YOUR_64_HEX_PBK",
+      "enabled": false
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "listen": ":443",
+  "sni": "www.microsoft.com",
+  "users_file": "users.json",
+  "server_key_file": "atlant_server_key.bin",
+  "transport": "auto",
+  "udp_mode": "chacha20",
+  "debug": false,
+  "bandwidth": {
+    "up_mbps": 0,
+    "down_mbps": 0
+  },
+  "quic": {
+    "max_idle_timeout_sec": 30,
+    "keep_alive_period_sec": 10,
+    "stream_receive_window_mb": 4,
+    "conn_receive_window_mb": 8,
+    "socket_buffer_size_mb": 16,
+    "disable_pacer": false
+  },
+  "yamux": {
+    "max_stream_window_kb": 2048,
+    "keep_alive_period_sec": 25,
+    "write_timeout_sec": 15
+  }
+}
