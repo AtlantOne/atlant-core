@@ -41,9 +41,10 @@ var (
 	quicDialInProgress  bool
 	quicDialWaitChan    chan struct{}
 	quicDialLastErr     error
+	quicDialCooldown    wire.DialCooldown
 )
 
-func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
+func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 	if err := settings.Profile(cfg.ServerAddr, cfg.SNI, cfg.PBK, cfg.User); err != nil {
 		return nil, err
 	}
@@ -85,18 +86,30 @@ func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
 		return nil, fmt.Errorf("quic dial completed without connection")
 	}
 
+	if err := quicDialCooldown.RetryError(time.Now()); err != nil {
+		quicClientMu.Unlock()
+		return nil, err
+	}
 	quicDialInProgress = true
 	quicDialWaitChan = make(chan struct{})
 	quicClientMu.Unlock()
 
 	defer func() {
 		quicClientMu.Lock()
+		quicDialLastErr = resultErr
+		quicDialCooldown.Record(resultErr, time.Now())
 		quicDialInProgress = false
 		close(quicDialWaitChan)
 		quicClientMu.Unlock()
 	}()
 
-	serverUDPAddr, err := net.ResolveUDPAddr("udp", cfg.ServerAddr)
+	dialTimeout := 5 * time.Second
+	if cfg.WireVersion == 4 || cfg.WireVersion == 6 {
+		dialTimeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	serverUDPAddr, err := quicpeer.ResolveUDP(ctx, cfg.ServerAddr)
 	if err != nil {
 		dialErr := fmt.Errorf("resolve server addr: %w", err)
 		quicClientMu.Lock()
@@ -177,13 +190,6 @@ func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
 	quicpeer.ConfigureTLSPrivacy(tlsConfig, cfg.WireVersion)
 
 	quicConfig := quicpeer.ClientConfig()
-
-	dialTimeout := 5 * time.Second
-	if cfg.WireVersion == 4 || cfg.WireVersion == 6 {
-		dialTimeout = 10 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
-	defer cancel()
 
 	var direct []quicpeer.DirectCredentials
 	if cfg.WireVersion == 7 {

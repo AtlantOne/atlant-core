@@ -1,0 +1,26 @@
+[
+  {
+    "version": "before",
+    "direction": "D",
+    "mbps": 18.839373553248677,
+    "p95_ms": 1019.9707330000001
+  },
+  {
+    "version": "before",
+    "direction": "U",
+    "mbps": 18.80717882580928,
+    "p95_ms": 994.687598
+  },
+  {
+    "version": "after",
+    "direction": "D",
+    "mbps": 18.802414445571916,
+    "p95_ms": 154.1931955
+  },
+  {
+    "version": "after",
+    "direction": "U",
+    "mbps": 18.77442591080481,
+    "p95_ms": 144.78430450000002
+  }
+]

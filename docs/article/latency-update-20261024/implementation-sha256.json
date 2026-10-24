@@ -1,0 +1,18 @@
+{
+  "shared/xhttppool/pool.go": "5e4304b6c1e6430cb6907b4387ca446501dd7e3fb1cb287579b3830201ab95c8",
+  "shared/quicpeer/resolve.go": "474e1314703b63a8470c982ea0adc0544664ff4d6803336ff0a6fc9d53079cc5",
+  "shared/go.mod": "b58406b5c42178e0f02419479c2560450618e12faeb35a571a51075e7969156e",
+  "shared/go.sum": "450e0f09259aa870490e4e4f8652dffd3caa8bcccd1324ef183ce630907a5b0c",
+  "client/android/quic.go": "3143537a7af95d44f212b5c868927690712c1bc6317a2839d3451f2037a8928f",
+  "client/android/xhttp.go": "491e031d12edfc661cc045812016cab99c73dba36ca424df801ef417b65624c2",
+  "client/android/tun.go": "8cc229013fb8bc591175b2d0a195a19349304d95c895f9828d3aead8edcb5422",
+  "client/android/udp_policy.go": "c1428450a49839000cefb6ddd22985108c802f98071e4cc68dcf284f721541a5",
+  "client/android/atlant.go": "ab775430b853b94fb0e7da643a8b76205396dec8fbe3eb506d10f3dead488887",
+  "client/linux/main.go": "e5ffc0f6981c313c4bef9558dbf34224803e4652beb8d97b6a67d6fe3a0e9f64",
+  "client/linux/xhttp.go": "19c8535d54dafc1c97add6b9111b05045a7213e1fe209c64b304ae6aa49d9b77",
+  "client/linux/quic.go": "e0ac78426463f4d9a122264b7a5cb9eede690bb6b53a4756acedcf1923cbb963",
+  "client/windows/core/main.go": "d044bf37168694c645f54731502f7ef02b8e25353d35f33b6552ba1204f3eb7f",
+  "client/windows/core/xhttp.go": "99ac729bca9ddd7326f38390c5ecc979a88d588c051fed76b4d5e58191369edc",
+  "client/windows/core/quic.go": "debb71b450697f395d7bcf439e826369140fae8c89226f6706d2179c5caa4323",
+  "client/windows/core/reality.go": "f6b929606abbd218841158ce9a054483fdf93f66339e469eb8f69aff8e1b4ec9"
+}

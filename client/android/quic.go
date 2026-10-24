@@ -144,6 +144,7 @@ var (
 	quicDialInProgress  bool
 	quicDialWaitChan    chan struct{}
 	quicDialLastErr     error
+	quicDialCooldown    wire.DialCooldown
 	quicDialCancel      context.CancelFunc
 	quicGeneration      uint64
 	quicSessionCache                 = tls.NewLRUClientSessionCache(64)
@@ -169,6 +170,7 @@ func closeQUICClient(reason string) {
 	quicClientTransport = nil
 	quicClientPacket = nil
 	quicDialLastErr = nil
+	quicDialCooldown = wire.DialCooldown{}
 	quicClientMu.Unlock()
 
 	if conn != nil {
@@ -203,7 +205,15 @@ func unregisterFlowSubscriber(flowID uint32) {
 	quicFlowNATMu.Unlock()
 }
 
-func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
+func prepareQUICSession(cfg *Config) error {
+	_, err := getOrDialQUICClient(cfg)
+	if err != nil && cfg.context().Err() == nil {
+		log.Printf("[QUIC] Carrier preparation failed: %v", err)
+	}
+	return err
+}
+
+func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 	sessionCtx := cfg.context()
 	if err := sessionCtx.Err(); err != nil {
 		return nil, err
@@ -249,6 +259,10 @@ func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
 		return getOrDialQUICClient(cfg)
 	}
 
+	if err := quicDialCooldown.RetryError(time.Now()); err != nil {
+		quicClientMu.Unlock()
+		return nil, err
+	}
 	quicDialInProgress = true
 	quicDialWaitChan = make(chan struct{})
 	generation := quicGeneration
@@ -263,6 +277,10 @@ func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
 
 	defer func() {
 		quicClientMu.Lock()
+		if generation == quicGeneration {
+			quicDialLastErr = resultErr
+			quicDialCooldown.Record(resultErr, time.Now())
+		}
 		quicDialInProgress = false
 		quicDialCancel = nil
 		close(quicDialWaitChan)
@@ -277,7 +295,7 @@ func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
 			targetAddr = net.JoinHostPort(host, strconv.Itoa(hopPort))
 		}
 	}
-	serverUDPAddr, err := net.ResolveUDPAddr("udp", targetAddr)
+	serverUDPAddr, err := quicpeer.ResolveUDP(ctx, targetAddr)
 	if err != nil {
 		dialErr := fmt.Errorf("resolve server addr: %w", err)
 		quicClientMu.Lock()
@@ -286,7 +304,11 @@ func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
 		return nil, dialErr
 	}
 
-	pc, err := net.ListenPacket("udp", "0.0.0.0:0")
+	packetNetwork, packetBind := "udp4", "0.0.0.0:0"
+	if serverUDPAddr.IP.To4() == nil {
+		packetNetwork, packetBind = "udp6", "[::]:0"
+	}
+	pc, err := net.ListenPacket(packetNetwork, packetBind)
 	if err != nil {
 		dialErr := fmt.Errorf("listen packet: %w", err)
 		quicClientMu.Lock()

@@ -27,6 +27,17 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if cfg.Transport == "quic" || cfg.TCPProto == "quic" {
+		if _, err := getOrDialQUICClient(cfg); err != nil {
+			log.Printf("[QUIC] Carrier preparation failed: %v", err)
+		}
+	} else if cfg.UDPProto == "quic" && cfg.TrafficMode != "tcp" {
+		go func() {
+			if _, err := getOrDialQUICClient(cfg); err != nil {
+				log.Printf("[QUIC] Carrier preparation failed: %v", err)
+			}
+		}()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

@@ -67,6 +67,7 @@ var (
 	tunDevice      tun.Device
 	cancelFunc     context.CancelFunc
 	isRunning      bool
+	activeConfig   *Config
 	runWg          sync.WaitGroup
 	appLogListener LogListener
 	appLogMu       sync.Mutex
@@ -115,6 +116,13 @@ func NotifyNetworkChanged() {
 	closeRealitySession()
 	closeQUICClient("underlying network changed")
 	closeXHTTPTransport()
+	mu.Lock()
+	cfg := activeConfig
+	running := isRunning
+	mu.Unlock()
+	if running && cfg != nil && (GetTCPProto() == "quic" || cfg.UDPMode != "tcp") {
+		go prepareQUICSession(cfg)
+	}
 }
 
 var (
@@ -412,7 +420,14 @@ func StartVPNWithUser(server, sni, pbk, user, serverPubKey, udpMode, tunAddr str
 	cfg.runCtx = ctx
 	sessionCancel := cancelFunc
 	isRunning = true
+	activeConfig = cfg
 	mu.Unlock()
+	var quicReady <-chan error
+	if cfg.Transport == "quic" || cfg.UDPMode != "tcp" {
+		ready := make(chan error, 1)
+		quicReady = ready
+		go func() { ready <- prepareQUICSession(cfg) }()
+	}
 
 	runWg.Add(1)
 	ready := make(chan error, 1)
@@ -434,9 +449,29 @@ func StartVPNWithUser(server, sni, pbk, user, serverPubKey, udpMode, tunAddr str
 		runWg.Wait()
 		mu.Lock()
 		isRunning = false
+		activeConfig = nil
 		cancelFunc = nil
 		mu.Unlock()
 		return fmt.Errorf("initialize Android TUN: %w", err)
+	}
+	// In all-QUIC mode, report ready after the secure carrier is ready rather
+	// than making the first browser request pay the entire cold handshake.
+	if cfg.Transport == "quic" && quicReady != nil {
+		select {
+		case err := <-quicReady:
+			if err != nil && !IsAutoFallbackEnabled() {
+				sessionCancel()
+				runWg.Wait()
+				mu.Lock()
+				isRunning = false
+				activeConfig = nil
+				cancelFunc = nil
+				mu.Unlock()
+				return fmt.Errorf("prepare QUIC carrier: %w", err)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	go startChaffingWorker(ctx, cfg)
 	if IsDecoyTrafficEnabled() {
@@ -472,6 +507,7 @@ func StopVPN() {
 	runWg.Wait()
 	mu.Lock()
 	isRunning = false
+	activeConfig = nil
 	setUDPBlocked(false)
 	mu.Unlock()
 }

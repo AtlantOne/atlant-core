@@ -15,6 +15,10 @@ func preferQUICUDPStream(destination string) bool {
 	return err == nil && port == "443"
 }
 
+func dnsViaQUIC(tcpProto, udpMode string, blocked bool) bool {
+	return (tcpProto == "quic" || tcpProto == "udp") && udpMode != "tcp" && !blocked
+}
+
 // A packet-size error is not evidence that UDP is blocked on this network.
 func isQUICDatagramTooLarge(err error) bool {
 	var sizeError *quic.DatagramTooLargeError

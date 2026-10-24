@@ -673,6 +673,18 @@ func main() {
 	}
 
 	// Session health checker & Chaffing background noise
+	if !cfg.Tun || amAdmin() {
+		prepare := func() {
+			if _, err := getOrDialQUICClient(cfg); err != nil {
+				log.Printf("[QUIC] Carrier preparation failed: %v", err)
+			}
+		}
+		if cfg.Transport == "quic" || cfg.TCPProto == "quic" {
+			prepare()
+		} else if cfg.UDPProto == "quic" && cfg.TrafficMode != "tcp" {
+			go prepare()
+		}
+	}
 	go sessionHealthChecker()
 	go startChaffingWorker(cfg)
 

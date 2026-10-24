@@ -4,6 +4,7 @@ import (
 	"atlant.local/protocol/realityauth"
 	"atlant.local/protocol/tlsprofiles"
 	"atlant.local/protocol/wire"
+	"atlant.local/protocol/xhttppool"
 	"bytes"
 	"context"
 	"crypto/ecdh"
@@ -25,7 +26,6 @@ import (
 
 	"github.com/hashicorp/yamux"
 	"golang.org/x/crypto/cryptobyte"
-	"golang.org/x/net/http2"
 
 	u "github.com/refraction-networking/utls"
 )
@@ -169,6 +169,7 @@ func dialServer(cfg *Config, serverAddr string) (net.Conn, error) {
 }
 
 type http2DuplexConn struct {
+	lease         *xhttppool.Lease
 	reader        io.ReadCloser
 	writer        io.Writer
 	closer        io.Closer
@@ -200,6 +201,8 @@ func (c *http2DuplexConn) Read(b []byte) (int, error) {
 }
 
 func (c *http2DuplexConn) Write(b []byte) (int, error) {
+	c.lease.Pending(len(b))
+	defer c.lease.Pending(-len(b))
 	if dl := c.writeDeadline.Load(); dl > 0 && time.Now().UnixNano() >= dl {
 		return 0, os.ErrDeadlineExceeded
 	}
@@ -258,6 +261,7 @@ func (c *http2DuplexConn) Close() error {
 		if c.reader != nil {
 			c.reader.Close()
 		}
+		c.lease.Release()
 	})
 	return nil
 }
@@ -297,14 +301,10 @@ func (c *http2DuplexConn) SetDeadline(t time.Time) error {
 	return c.SetWriteDeadline(t)
 }
 
-const xhttpPoolSize = 3
-
 var (
-	xhttpTransports   [xhttpPoolSize]*http2.Transport
-	xhttpTrMu         sync.Mutex
-	xhttpTransportIdx uint32
-	activeServerMu    sync.RWMutex
-	activeServerAddr  string
+	xhttpCarriers    xhttppool.Pool
+	activeServerMu   sync.RWMutex
+	activeServerAddr string
 )
 
 func getActiveServer(cfg *Config) string {

@@ -434,7 +434,11 @@ func handleUDPConn(gConn net.Conn, cfg *Config, destAddr string) {
 				copy(firstPkt, buf[:n])
 			}
 		}
-		routeUDPViaTCP(gConn, cfg, dnsTarget, firstPkt)
+		if dnsViaQUIC(GetTCPProto(), cfg.UDPMode, isUDPBlocked()) {
+			routeUDPViaQUICStream(gConn, cfg, dnsTarget, firstPkt)
+		} else {
+			routeUDPViaTCP(gConn, cfg, dnsTarget, firstPkt)
+		}
 		return
 	}
 

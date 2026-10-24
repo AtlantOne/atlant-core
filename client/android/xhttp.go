@@ -5,6 +5,7 @@ package atlant
 
 import (
 	"atlant.local/protocol/wire"
+	"atlant.local/protocol/xhttppool"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -27,15 +28,11 @@ import (
 	"golang.org/x/net/http2"
 )
 
-const xhttpPoolSize = 3
-
 var (
-	xhttpTransports   [xhttpPoolSize]*http2.Transport
-	xhttpTrMu         sync.Mutex
-	xhttpTransportIdx uint32
-	tcpProto          = "tcp" // "tcp" (direct/mux) or "xhttp" (HTTP/2 stream over Reality TLS)
-	xhttpPath         = "/api/v1/sync"
-	tcpProtoMu        sync.RWMutex
+	xhttpCarriers xhttppool.Pool
+	tcpProto      = "tcp" // "tcp" (direct/mux) or "xhttp" (HTTP/2 stream over Reality TLS)
+	xhttpPath     = "/api/v1/sync"
+	tcpProtoMu    sync.RWMutex
 )
 
 // SetTCPProto sets the TCP transport mode: "tcp" (direct/mux) or "xhttp" (HTTP/2 over Reality).
@@ -68,45 +65,33 @@ func SetXHTTPPath(path string) {
 	xhttpPath = p
 }
 
-func getXHTTPTransport(cfg *Config) *http2.Transport {
-	xhttpTrMu.Lock()
-	defer xhttpTrMu.Unlock()
-
-	idx := atomic.AddUint32(&xhttpTransportIdx, 1) % xhttpPoolSize
-	if xhttpTransports[idx] != nil {
-		return xhttpTransports[idx]
-	}
-
-	tr := &http2.Transport{
-		DialTLSContext: func(ctx context.Context, network, addr string, tlsConfig *tls.Config) (net.Conn, error) {
-			// Connect directly via Reality TLS 1.3 channel (XHTTP over Reality)
-			secureConn, err := dialRealityConn(cfg)
-			if err != nil {
-				return nil, fmt.Errorf("reality TLS handshake for XHTTP failed: %w", err)
-			}
-			if conn, ok := secureConn.(*realitySecureConn); ok {
-				conn.enableXHTTPBatching()
-			}
-			return secureConn, nil
-		},
-		AllowHTTP:                  true,
-		ReadIdleTimeout:            20 * time.Second,
-		PingTimeout:                5 * time.Second,
-		StrictMaxConcurrentStreams: false,
-	}
-	xhttpTransports[idx] = tr
-	return tr
+func getXHTTPTransport(cfg *Config) (*xhttppool.Lease, error) {
+	key := xhttppool.Key(cfg.ServerAddr, cfg.SNI, cfg.User, cfg.PBK, cfg.ServerPubKey, cfg.Fingerprint, strconv.Itoa(cfg.WireVersion))
+	return xhttpCarriers.Acquire(key, func() *http2.Transport {
+		tr := &http2.Transport{
+			DialTLSContext: func(ctx context.Context, network, addr string, tlsConfig *tls.Config) (net.Conn, error) {
+				// Connect directly via Reality TLS 1.3 channel (XHTTP over Reality)
+				secureConn, err := dialRealityConn(cfg)
+				if err != nil {
+					return nil, fmt.Errorf("reality TLS handshake for XHTTP failed: %w", err)
+				}
+				if conn, ok := secureConn.(*realitySecureConn); ok {
+					conn.enableXHTTPBatching()
+				}
+				return secureConn, nil
+			},
+			AllowHTTP:                  true,
+			ReadIdleTimeout:            20 * time.Second,
+			PingTimeout:                5 * time.Second,
+			IdleConnTimeout:            90 * time.Second,
+			StrictMaxConcurrentStreams: false,
+		}
+		return tr
+	})
 }
 
 func closeXHTTPTransport() {
-	xhttpTrMu.Lock()
-	defer xhttpTrMu.Unlock()
-	for i := range xhttpTransports {
-		if xhttpTransports[i] != nil {
-			xhttpTransports[i].CloseIdleConnections()
-			xhttpTransports[i] = nil
-		}
-	}
+	xhttpCarriers.Reset()
 }
 
 // buildStealthPreamble constructs the binary metadata frame prepended to the POST body.
@@ -212,7 +197,17 @@ func (l *lazyHTTP2Reader) Close() error {
 }
 
 func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
-	tr := getXHTTPTransport(cfg)
+	lease, err := getXHTTPTransport(cfg)
+	if err != nil {
+		return nil, err
+	}
+	owned := false
+	defer func() {
+		if !owned {
+			lease.Release()
+		}
+	}()
+	tr := lease.Transport()
 	pr, pw := io.Pipe()
 
 	tcpProtoMu.RLock()
@@ -255,13 +250,6 @@ func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
 		resp, rtErr := usedTr.RoundTrip(req)
 		if rtErr != nil {
 			// If transport failed — invalidate only this slot in pool
-			xhttpTrMu.Lock()
-			for i := range xhttpTransports {
-				if xhttpTransports[i] == usedTr {
-					xhttpTransports[i] = nil
-				}
-			}
-			xhttpTrMu.Unlock()
 			lazyR.err = fmt.Errorf("XHTTP stream RoundTrip failed: %w", rtErr)
 			_ = pr.CloseWithError(lazyR.err)
 			return
@@ -276,7 +264,9 @@ func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
 	}(tr)
 
 	remoteAddr, _ := net.ResolveTCPAddr("tcp", cfg.ServerAddr)
+	owned = true
 	return &http2DuplexConn{
+		lease:      lease,
 		reader:     lazyR,
 		writer:     pw,
 		closer:     pw,
@@ -288,6 +278,7 @@ func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
 }
 
 type http2DuplexConn struct {
+	lease         *xhttppool.Lease
 	reader        io.ReadCloser
 	writer        io.Writer
 	closer        io.Closer
@@ -319,6 +310,8 @@ func (c *http2DuplexConn) Read(b []byte) (int, error) {
 }
 
 func (c *http2DuplexConn) Write(b []byte) (int, error) {
+	c.lease.Pending(len(b))
+	defer c.lease.Pending(-len(b))
 	if dl := c.writeDeadline.Load(); dl > 0 && time.Now().UnixNano() >= dl {
 		return 0, os.ErrDeadlineExceeded
 	}
@@ -377,6 +370,7 @@ func (c *http2DuplexConn) Close() error {
 		if c.reader != nil {
 			c.reader.Close()
 		}
+		c.lease.Release()
 	})
 	return nil
 }
