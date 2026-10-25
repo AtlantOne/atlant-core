@@ -227,7 +227,10 @@ func startTun(cfg *Config) {
 		for {
 			n, err := os.Stdin.Read(buf)
 			if err != nil {
-				// Stdin closed or running without console/under UAC. Do NOT abort VPN.
+				if cfg.ManagedStdin {
+					doGracefulExit("GUI control pipe closed")
+				}
+				// Standalone/UAC clients without a managed pipe remain independent.
 				return
 			}
 			if n > 0 && strings.Contains(string(buf[:n]), "STOP") {

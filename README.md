@@ -35,21 +35,12 @@ library is generated at `artifacts/android/atlant.aar`; copy it into the Android
 application repository at the same relative path. Android builds require JDK,
 Android SDK/NDK and gomobile.
 
-## Configure and test
+## Configure
 
 Start with the example JSON files, not somebody else's private configuration.
 Keep the management API on loopback. CA certificates serve panel/subscription
 HTTPS, not VPN authentication. Clients must pin the correct server public key.
 New profiles should explicitly select `wire_version: 7`.
-
-```sh
-go -C shared test ./...
-go -C server test ./...
-```
-
-The panel/core integration test requires Python and `ATLANT_PANEL_SOURCE` set to
-the absolute path of the panel repository's `management` directory. Without that
-checkout the integration test explicitly skips; this is not an integration pass.
 
 ## Licensing
 

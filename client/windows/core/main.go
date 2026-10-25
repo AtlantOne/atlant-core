@@ -21,6 +21,7 @@ import (
 )
 
 type Config struct {
+	ManagedStdin     bool     `json:"-"`
 	ServerAddr       string   `json:"server"`
 	BackupServers    []string `json:"backup_servers"`
 	SNI              string   `json:"sni"`
@@ -374,6 +375,7 @@ func parseConfig() *Config {
 	}
 
 	if *pbkStdin {
+		cfg.ManagedStdin = true
 		if *pbk != "" {
 			fmt.Println("Choose either -pbk or -pbk-stdin")
 			os.Exit(1)
@@ -662,6 +664,26 @@ func main() {
 	cfg := parseConfig()
 	InitCoreLogger(cfg.LogLevel)
 	activeCfg = cfg
+	if cfg.Tun && !amAdmin() {
+		log.Printf("[TUN] Administrator privileges are required. Requesting UAC elevation...")
+		runMeElevated()
+		return
+	}
+	if cfg.Tun {
+		release, err := acquireTUNInstance(`Global\AtlantVPN.TUN`)
+		if err != nil {
+			log.Printf("[TUN] %v", err)
+			os.Exit(1)
+		}
+		defer release()
+	}
+	// Reserve the proxy port before starting carriers or changing TUN/routes.
+	socksServer, socksListener, err := openSocks5(cfg)
+	if err != nil {
+		log.Printf("[SOCKS5] Startup refused: %v", err)
+		os.Exit(1)
+	}
+	defer socksListener.Close()
 
 	// Discover default physical outbound IP so SOCKS5 and non-TUN modes bind directly to physical interface
 	if physicalLocalIP == nil {
@@ -689,18 +711,13 @@ func main() {
 	go startChaffingWorker(cfg)
 
 	if cfg.Tun {
-		if !amAdmin() {
-			log.Printf("[TUN] Administrator privileges are required for TUN mode. Requesting UAC elevation...")
-			runMeElevated()
-			os.Exit(0)
-		}
 		// Also launch local SOCKS5 proxy concurrently for local apps, browser proxying, and in-tunnel speedtest
-		go startSocks5(cfg)
+		go serveSocks5(socksServer, socksListener)
 		// TUN mode: intercept system traffic
 		startTun(cfg)
 	} else {
 		// SOCKS5 proxy mode
-		startSocks5(cfg)
+		serveSocks5(socksServer, socksListener)
 	}
 }
 
@@ -774,7 +791,7 @@ func runMeElevated() {
 	}
 }
 
-func startSocks5(cfg *Config) {
+func openSocks5(cfg *Config) (*socks5.Server, net.Listener, error) {
 	conf := &socks5.Config{
 		Resolver: remoteResolver{},
 		Rewriter: remoteRewriter{},
@@ -805,23 +822,23 @@ func startSocks5(cfg *Config) {
 	}
 	server, err := socks5.New(conf)
 	if err != nil {
-		log.Printf("[SOCKS5] Failed to create SOCKS5 server: %v", err)
-		return
+		return nil, nil, fmt.Errorf("create SOCKS5 server: %w", err)
 	}
 	listenAddr, err := socksBindAddress(cfg.LocalPort, cfg.AllowLAN)
 	if err != nil {
-		log.Printf("[SOCKS5] Refusing unsafe listen address: %v", err)
-		return
+		return nil, nil, fmt.Errorf("unsafe listen address: %w", err)
 	}
-	log.Printf("[SOCKS5] SOCKS5 server listening on %s (AllowLAN=%v)", listenAddr, cfg.AllowLAN)
 
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		log.Printf("[SOCKS5] Failed to listen on %s: %v", listenAddr, err)
-		return
+		return nil, nil, fmt.Errorf("listen on %s: %w", listenAddr, err)
 	}
-	defer ln.Close()
+	log.Printf("[SOCKS5] SOCKS5 server listening on %s (AllowLAN=%v)", ln.Addr(), cfg.AllowLAN)
+	return server, ln, nil
+}
 
+func serveSocks5(server *socks5.Server, ln net.Listener) {
+	defer ln.Close()
 	if err := server.Serve(ln); err != nil {
 		log.Printf("[SOCKS5] Server error: %v", err)
 	}
