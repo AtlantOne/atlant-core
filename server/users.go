@@ -298,6 +298,11 @@ func recordUserTraffic(name string, upBytes, downBytes uint64) bool {
 	}
 	usersMu.Unlock()
 	if !allowed {
+		reason := userAccessDenialReason(name)
+		if reason == "" {
+			reason = "traffic reservation rejected"
+		}
+		log.Printf("[ACCESS] Closing sessions for user %q: %s", name, reason)
 		kickUserSessions(name)
 		return false
 	}
@@ -325,32 +330,42 @@ func getUserActiveIPCount(name string) int {
 }
 
 func isUserAllowed(name string) bool {
-	if name == "" || !subscriptionUserAllowed(name) {
-		return false
+	return userAccessDenialReason(name) == ""
+}
+
+func userAccessDenialReason(name string) string {
+	if name == "" {
+		return "missing user"
+	}
+	if !subscriptionUserAllowed(name) {
+		return "subscription disabled, expired, or access index unavailable"
 	}
 	usersMu.RLock()
 	defer usersMu.RUnlock()
 	rec, ok := usersDB.Users[name]
 	if !ok || rec == nil {
-		return false
+		return "unknown user"
 	}
 	if !rec.Enabled {
-		return false
+		return "user disabled"
 	}
 	now := time.Now().Unix()
 	if rec.ExpiresAt > 0 && now >= rec.ExpiresAt {
-		return false
+		return "user expired"
 	}
 	if budget := quotaBudgetLocked(name); budget != nil {
-		return budget.valid()
+		if !budget.valid() {
+			return "quota authorization unavailable or expired"
+		}
+		return ""
 	}
 	if subscriptionRequiresQuota(name) {
-		return false
+		return "required quota worker unavailable"
 	}
 	if trafficLimitReached(atomic.LoadUint64(&rec.UpBytes), atomic.LoadUint64(&rec.DownBytes), rec.TotalLimit) {
-		return false
+		return "traffic limit reached"
 	}
-	return true
+	return ""
 }
 
 func enforceActiveUserLimits() {
@@ -360,7 +375,8 @@ func enforceActiveUserLimits() {
 		users := make(map[string]bool)
 		activeSessions.Range(func(_, value any) bool { users[value.(*activeSessionItem).user] = true; return true })
 		for name := range users {
-			if !isUserAllowed(name) {
+			if reason := userAccessDenialReason(name); reason != "" {
+				log.Printf("[ACCESS] Closing active sessions for user %q: %s", name, reason)
 				kickUserSessions(name)
 			}
 		}

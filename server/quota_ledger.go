@@ -53,7 +53,9 @@ CREATE TABLE IF NOT EXISTS quota_node_subscriptions(node_id TEXT NOT NULL REFERE
 CREATE TABLE IF NOT EXISTS quota_bindings(user_name TEXT PRIMARY KEY REFERENCES users(name) ON DELETE CASCADE,subscription_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS quota_grants(id TEXT PRIMARY KEY,subscription_id TEXT NOT NULL REFERENCES quota_accounts(subscription_id) ON DELETE CASCADE,node_id TEXT NOT NULL,session TEXT NOT NULL,capacity INTEGER NOT NULL,up INTEGER NOT NULL,down INTEGER NOT NULL,closed INTEGER NOT NULL,updated_at INTEGER NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS quota_one_active ON quota_grants(subscription_id,node_id,session) WHERE closed=0;
-CREATE TABLE IF NOT EXISTS quota_requests(node_id TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,response BLOB NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(node_id,id));`)
+CREATE TABLE IF NOT EXISTS quota_requests(node_id TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,response BLOB NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(node_id,id));
+CREATE INDEX IF NOT EXISTS quota_requests_expiry ON quota_requests(expires_at);
+CREATE INDEX IF NOT EXISTS quota_closed_grants_expiry ON quota_grants(updated_at) WHERE closed=1;`)
 	return err
 }
 

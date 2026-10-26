@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -38,6 +39,7 @@ type nodeBudget struct {
 	retryAfter            time.Time
 	pending               *quotaRequest
 	call                  quotaCall
+	lastSyncError         time.Time
 }
 
 type quotaAuthorization struct {
@@ -48,6 +50,17 @@ type quotaAuthorization struct {
 func (b *nodeBudget) valid() bool {
 	a := b.authorization.Load()
 	return !b.retired.Load() && a != nil && a.allowed && time.Now().Before(a.deadline)
+}
+
+// Both bounds describe the same request lifetime. Taking their minimum keeps
+// cached replies bounded without subtracting an RPC's latency twice.
+func quotaAuthorizationDeadline(started time.Time, issuedAt int64, validSeconds int64) time.Time {
+	deadline := started.Add(time.Duration(validSeconds) * time.Second)
+	issuedDeadline := time.Unix(issuedAt, 0).Add(time.Duration(validSeconds) * time.Second)
+	if issuedDeadline.Before(deadline) {
+		return issuedDeadline
+	}
+	return deadline
 }
 
 // Called without usersMu. Network/SQLite work happens once per reservation,
@@ -65,6 +78,10 @@ func (b *nodeBudget) syncLocked(closeGrant bool, want int64) error {
 	started := time.Now()
 	reply, err := b.call(ctx, *b.pending)
 	if err != nil {
+		if time.Since(b.lastSyncError) >= 15*time.Second {
+			log.Printf("[QUOTA] Authorization refresh failed for subscription %s: %v", b.subscription, err)
+			b.lastSyncError = time.Now()
+		}
 		if errors.Is(err, errQuotaClock) {
 			b.pending.ID = quotaID()
 			b.pending.IssuedAt = time.Now().Unix()
@@ -73,16 +90,12 @@ func (b *nodeBudget) syncLocked(closeGrant bool, want int64) error {
 	}
 	// A cached response must not extend a stale authorization for another six
 	// seconds after a slow/lost request. Use the original request's age too.
-	remaining := time.Duration(reply.ValidSeconds)*time.Second - time.Since(started)
-	age := time.Now().Unix() - b.pending.IssuedAt
-	if age > 0 {
-		remaining -= time.Duration(age) * time.Second
-	}
+	deadline := quotaAuthorizationDeadline(started, b.pending.IssuedAt, int64(reply.ValidSeconds))
 	if b.pending.Close || b.grant == "" {
 		b.up, b.down = 0, 0
 	}
 	b.grant, b.capacity, b.allowed = reply.Grant, reply.Capacity, reply.Allowed
-	b.deadline = time.Now().Add(remaining)
+	b.deadline = deadline
 	b.authorization.Store(&quotaAuthorization{allowed: b.allowed, deadline: b.deadline})
 	if !b.allowed {
 		b.retryAfter = time.Now().Add(2 * time.Second)
