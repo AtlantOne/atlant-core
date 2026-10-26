@@ -37,19 +37,19 @@ func WriteClientHello(writer io.Writer, record []byte) error {
 	if len(record)-5 <= maximumPayload {
 		return write(record)
 	}
+	// Enqueue the complete flight in one socket write. Separate writes expose
+	// a gap after the first TLS record; record framing and transcript stay exact.
+	count := (len(record) - 5 + maximumPayload - 1) / maximumPayload
+	flight := make([]byte, 0, len(record)+5*(count-1))
 	for payload := record[5:]; len(payload) > 0; {
 		n := len(payload)
 		if n > maximumPayload {
 			n = maximumPayload
 		}
-		fragment := make([]byte, 5+n)
-		copy(fragment, record[:3])
-		binary.BigEndian.PutUint16(fragment[3:5], uint16(n))
-		copy(fragment[5:], payload[:n])
-		if err := write(fragment); err != nil {
-			return err
-		}
+		flight = append(flight, record[:3]...)
+		flight = append(flight, byte(n>>8), byte(n))
+		flight = append(flight, payload[:n]...)
 		payload = payload[n:]
 	}
-	return nil
+	return write(flight)
 }

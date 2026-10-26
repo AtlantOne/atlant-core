@@ -33,10 +33,12 @@ type quotaRequest struct {
 }
 
 type quotaReply struct {
-	Grant        string `json:"grant,omitempty"`
-	Capacity     int64  `json:"capacity"`
-	Allowed      bool   `json:"allowed"`
-	ValidSeconds int64  `json:"valid_seconds"`
+	Grant          string `json:"grant,omitempty"`
+	Capacity       int64  `json:"capacity"`
+	Allowed        bool   `json:"allowed"`
+	ValidSeconds   int64  `json:"valid_seconds"`
+	ReservedAccess bool   `json:"reserved_access,omitempty"`
+	ExpiresAt      int64  `json:"expires_at,omitempty"`
 }
 
 type quotaSnapshot struct {
@@ -220,6 +222,8 @@ func processQuota(ctx context.Context, db *sql.DB, node string, r quotaRequest, 
 	}
 	reply.Allowed = valid && reply.Grant != "" && (q.Total == 0 || (q.Up+q.Down < q.Total && q.Up+q.Down+q.Reserved <= q.Total))
 	if reply.Allowed {
+		reply.ReservedAccess = true
+		reply.ExpiresAt = expires
 		reply.ValidSeconds = 6
 		if expires > 0 && expires-now.Unix() < 6 {
 			reply.ValidSeconds = expires - now.Unix()

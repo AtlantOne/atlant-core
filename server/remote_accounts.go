@@ -196,8 +196,8 @@ func loadRemoteBudgets(w *quotaWorker, users map[string]*nodeBudget) error {
 			if len(w.budgets) >= 20000 {
 				return errors.New("quota route limit reached")
 			}
-			client := &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-			b = &nodeBudget{subscription: sub, session: w.session, call: remoteQuotaCall(endpoint+"/quota/v1/budget", node, token, client)}
+			client := &http.Client{Timeout: quotaRefreshTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			b = &nodeBudget{subscription: sub, session: w.session, call: remoteQuotaCall(endpoint+"/quota/v1/budget", node, token, client), stop: w.stop}
 			w.budgets[key] = b
 		}
 		users[name] = b

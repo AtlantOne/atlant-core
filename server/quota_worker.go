@@ -27,6 +27,8 @@ type QuotaConfig struct {
 
 type quotaCall func(context.Context, quotaRequest) (quotaReply, error)
 
+const quotaRefreshTimeout = 15 * time.Second
+
 type nodeBudget struct {
 	mu                    sync.Mutex
 	subscription, session string
@@ -40,16 +42,32 @@ type nodeBudget struct {
 	pending               *quotaRequest
 	call                  quotaCall
 	lastSyncError         time.Time
+	lastTimingLog         time.Time
+	refresh               *quotaRefresh
+	stop                  <-chan struct{}
+}
+
+type quotaRefresh struct {
+	done chan struct{}
+	err  error
 }
 
 type quotaAuthorization struct {
-	allowed  bool
-	deadline time.Time
+	allowed   bool
+	deadline  time.Time
+	reserved  bool
+	expiresAt int64
 }
 
 func (b *nodeBudget) valid() bool {
 	a := b.authorization.Load()
-	return !b.retired.Load() && a != nil && a.allowed && time.Now().Before(a.deadline)
+	if b.retired.Load() || a == nil || !a.allowed {
+		return false
+	}
+	if a.reserved {
+		return a.expiresAt == 0 || time.Now().Unix() < a.expiresAt
+	}
+	return time.Now().Before(a.deadline)
 }
 
 // Both bounds describe the same request lifetime. Taking their minimum keeps
@@ -66,6 +84,21 @@ func quotaAuthorizationDeadline(started time.Time, issuedAt int64, validSeconds 
 // Called without usersMu. Network/SQLite work happens once per reservation,
 // not on each packet; only this subscription waits during its refill.
 func (b *nodeBudget) syncLocked(closeGrant bool, want int64) error {
+	// Wait without holding the packet-accounting lock. Only one RPC may own
+	// the cumulative report, including retries of an ambiguously committed RPC.
+	if pending := b.refresh; pending != nil {
+		previousGrant := b.grant
+		b.mu.Unlock()
+		<-pending.done
+		b.mu.Lock()
+		if pending.err != nil {
+			return pending.err
+		}
+		if closeGrant && b.grant != "" && (want == 0 || b.grant == previousGrant) {
+			return b.syncLocked(closeGrant, want)
+		}
+		return nil
+	}
 	if b.pending == nil {
 		r := quotaRequest{ID: quotaID(), Session: b.session, Subscription: b.subscription, Grant: b.grant, Up: b.up, Down: b.down, Want: want, Close: closeGrant, IssuedAt: time.Now().Unix()}
 		if r.ID == "" {
@@ -73,10 +106,39 @@ func (b *nodeBudget) syncLocked(closeGrant bool, want int64) error {
 		}
 		b.pending = &r
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	timeout := quotaRefreshTimeout
+	if b.retired.Load() {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	if b.stop != nil && !b.retired.Load() {
+		stop := b.stop
+		go func() {
+			select {
+			case <-stop:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
 	started := time.Now()
-	reply, err := b.call(ctx, *b.pending)
+	request := *b.pending
+	inflight := &quotaRefresh{done: make(chan struct{})}
+	b.refresh = inflight
+	b.mu.Unlock()
+	reply, err := b.call(ctx, request)
+	recordQuotaTiming(time.Since(started), err != nil)
+	b.mu.Lock()
+	inflight.err = err
+	b.refresh = nil
+	close(inflight.done)
+	if elapsed := time.Since(started); elapsed >= 250*time.Millisecond || err != nil {
+		if time.Since(b.lastTimingLog) >= 15*time.Second {
+			log.Printf("[QUOTA] Refresh duration=%s failed=%t subscription=%s", elapsed.Round(time.Millisecond), err != nil, b.subscription)
+			b.lastTimingLog = time.Now()
+		}
+	}
 	if err != nil {
 		if time.Since(b.lastSyncError) >= 15*time.Second {
 			log.Printf("[QUOTA] Authorization refresh failed for subscription %s: %v", b.subscription, err)
@@ -96,7 +158,7 @@ func (b *nodeBudget) syncLocked(closeGrant bool, want int64) error {
 	}
 	b.grant, b.capacity, b.allowed = reply.Grant, reply.Capacity, reply.Allowed
 	b.deadline = deadline
-	b.authorization.Store(&quotaAuthorization{allowed: b.allowed, deadline: b.deadline})
+	b.authorization.Store(&quotaAuthorization{allowed: b.allowed, deadline: b.deadline, reserved: reply.ReservedAccess, expiresAt: reply.ExpiresAt})
 	if !b.allowed {
 		b.retryAfter = time.Now().Add(2 * time.Second)
 	}
@@ -114,20 +176,29 @@ func (b *nodeBudget) consume(up, down uint64) bool {
 	if b.retired.Load() {
 		return false
 	}
+	// A failed heartbeat cannot reclaim bytes already reserved for this node.
+	// A closing grant is different: its unused balance may already have been
+	// returned by the coordinator, so never spend it while the reply is unknown.
+	if a := b.authorization.Load(); a != nil && a.reserved && b.valid() && b.grant != "" &&
+		(b.pending == nil || !b.pending.Close) && b.capacity-b.up-b.down >= amount {
+		b.up += int64(up)
+		b.down += int64(down)
+		return true
+	}
 	if !b.allowed && time.Now().Before(b.retryAfter) {
 		return false
 	}
-	if b.pending != nil && (b.pending.Close || b.grant == "" || !time.Now().Before(b.deadline)) {
+	if b.pending != nil && (b.pending.Close || b.grant == "" || !b.valid()) {
 		if b.syncLocked(false, quotaChunk) != nil {
 			return false
 		}
 	}
-	if !b.allowed || !time.Now().Before(b.deadline) {
+	if !b.allowed || !b.valid() {
 		want := int64(0)
 		if b.grant == "" {
 			want = quotaChunk
 		}
-		if b.syncLocked(false, want) != nil || !b.allowed || !time.Now().Before(b.deadline) {
+		if b.syncLocked(false, want) != nil || !b.allowed || !b.valid() {
 			return false
 		}
 	}
@@ -140,6 +211,9 @@ func (b *nodeBudget) consume(up, down uint64) bool {
 		if b.syncLocked(b.grant != "", quotaChunk) != nil || !b.allowed || b.capacity-b.up-b.down < amount {
 			return false
 		}
+	}
+	if !b.valid() {
+		return false
 	}
 	b.up += int64(up)
 	b.down += int64(down)
@@ -201,7 +275,7 @@ func reloadQuotaBindingsLocked() error {
 		}
 		b := w.budgets[sub]
 		if b == nil {
-			b = &nodeBudget{subscription: sub, session: w.session, call: w.call}
+			b = &nodeBudget{subscription: sub, session: w.session, call: w.call, stop: w.stop}
 			w.budgets[sub] = b
 		}
 		users[name] = b
@@ -268,7 +342,7 @@ func makeQuotaCall(c QuotaConfig, store *sqliteUserStore) (quotaCall, error) {
 	if len(token) != 64 || !isValidHex(token) {
 		return nil, errors.New("invalid quota node key file")
 	}
-	client := &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: quotaRefreshTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	endpoint := strings.TrimRight(c.Endpoint, "/") + "/quota/v1/budget"
 	return remoteQuotaCall(endpoint, c.NodeID, token, client), nil
 }
@@ -303,7 +377,7 @@ func remoteQuotaCall(endpoint, node, token string, client *http.Client) quotaCal
 			return reply, errors.New("invalid quota reply")
 		}
 		err = json.Unmarshal(data, &reply)
-		if err == nil && (reply.Capacity < 0 || reply.Capacity > quotaChunk || reply.ValidSeconds < 0 || reply.ValidSeconds > 6 || (reply.Grant != "" && !validQuotaID(reply.Grant))) {
+		if err == nil && (reply.Capacity < 0 || reply.Capacity > quotaChunk || reply.ValidSeconds < 0 || reply.ValidSeconds > 6 || reply.ExpiresAt < 0 || (reply.ReservedAccess && reply.Allowed && (reply.Grant == "" || reply.ValidSeconds == 0)) || (reply.Grant != "" && !validQuotaID(reply.Grant))) {
 			err = errors.New("invalid quota reply fields")
 		}
 		return reply, err

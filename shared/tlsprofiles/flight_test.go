@@ -22,6 +22,28 @@ func (w *partialHelloWriter) Write(p []byte) (int, error) {
 
 type failingHelloWriter struct{ err error }
 
+type countingHelloWriter struct {
+	bytes.Buffer
+	calls int
+}
+
+func (w *countingHelloWriter) Write(p []byte) (int, error) {
+	w.calls++
+	return w.Buffer.Write(p)
+}
+
+func TestHelloFlightIsEnqueuedInOneWrite(t *testing.T) {
+	for _, size := range []int{537, 1025, 1791, 4096, 16384} {
+		w := &countingHelloWriter{}
+		if err := WriteClientHello(w, helloRecord(size)); err != nil {
+			t.Fatal(err)
+		}
+		if w.calls != 1 {
+			t.Fatalf("ClientHello split across %d socket writes", w.calls)
+		}
+	}
+}
+
 func (w failingHelloWriter) Write(p []byte) (int, error) { return 0, w.err }
 
 func helloRecord(size int) []byte {
