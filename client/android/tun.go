@@ -172,12 +172,10 @@ func startTun(ctx context.Context, cfg *Config, tunFd int, ready chan<- error) {
 	// A local TUN alone does not mean the remote endpoint is usable. Check
 	// authentication before announcing readiness; the deferred cleanup closes
 	// the owned TUN descriptor on failure so Android can restore its routes.
-	probe, err := dialRealityConn(cfg)
-	if err != nil {
+	if err := authenticateTunnelCarrier(cfg, IsAutoFallbackEnabled(), prepareQUICSession, dialRealityConn); err != nil {
 		ready <- fmt.Errorf("authenticate VPN server before starting TUN: %w", err)
 		return
 	}
-	_ = probe.Close()
 	s, err := createStack()
 	if err != nil {
 		log.Printf("[Android] Failed to create stack: %v", err)

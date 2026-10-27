@@ -7,9 +7,11 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,6 +56,31 @@ func TestBrowserClientRejectsUnsupportedVerificationPolicy(t *testing.T) {
 }
 
 func TestBrowserClientInteroperatesWithMaintainedServer(t *testing.T) {
+	testBrowserClientTransfer(t, 0)
+}
+
+func TestBrowserClientBulkTransferOnInitialSizedPath(t *testing.T) {
+	for _, maximum := range []int{1250, 1230} {
+		t.Run(fmt.Sprint(maximum), func(t *testing.T) { testBrowserClientTransfer(t, maximum) })
+	}
+}
+
+type initialSizedPath struct {
+	net.PacketConn
+	maximum int
+	dropped atomic.Int32
+}
+
+func (p *initialSizedPath) WriteTo(data []byte, addr net.Addr) (int, error) {
+	if len(data) > p.maximum {
+		p.dropped.Add(1)
+		return len(data), nil // a silent path-MTU black hole, not a local write error
+	}
+	return p.PacketConn.WriteTo(data, addr)
+}
+
+func testBrowserClientTransfer(t *testing.T, maximum int) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cert := certificate(t)
@@ -63,7 +90,16 @@ func TestBrowserClientInteroperatesWithMaintainedServer(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(parsed)
-	listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true})
+	serverConfig := &quic.Config{EnableDatagrams: true}
+	if maximum > 0 {
+		serverConfig.InitialPacketSize = 1200
+		serverConfig.DisablePathMTUDiscovery = true
+	}
+	bind := "127.0.0.1:0"
+	if maximum == 1230 {
+		bind = "[::1]:0"
+	}
+	listener, err := quic.ListenAddr(bind, &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h3"}}, serverConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +133,16 @@ func TestBrowserClientInteroperatesWithMaintainedServer(t *testing.T) {
 		}
 		done <- err
 	}()
-	packet, err := net.ListenPacket("udp", "127.0.0.1:0")
+	packet, err := net.ListenPacket("udp", bind)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer packet.Close()
+	var path *initialSizedPath
+	if maximum > 0 {
+		path = &initialSizedPath{PacketConn: packet, maximum: maximum}
+		packet = path
+	}
 	transport := &quic.Transport{Conn: packet}
 	conn, closer, err := DialClient(ctx, transport, listener.Addr(), &tls.Config{ServerName: "localhost", RootCAs: roots, NextProtos: []string{"h3"}}, ClientConfig(), 6)
 	defer closer.Close()
@@ -133,5 +174,8 @@ func TestBrowserClientInteroperatesWithMaintainedServer(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if path != nil && path.dropped.Load() != 0 {
+		t.Fatalf("bulk packets exceeded the working Initial size: %d", path.dropped.Load())
 	}
 }

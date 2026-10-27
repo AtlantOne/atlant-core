@@ -137,6 +137,11 @@ func DialClient(ctx context.Context, transport *quic.Transport, addr net.Addr, t
 	}
 	bt := &browser.Transport{Conn: transport.Conn, ConnectionIDGenerator: browserZeroCID{}}
 	bc := &browser.Config{EnableDatagrams: true, MaxIdleTimeout: config.MaxIdleTimeout, KeepAlivePeriod: config.KeepAlivePeriod,
+		// Cold Initials already use this proven packet budget. Leaving the
+		// stack default (1280) here makes later bulk packets larger than the
+		// successful 1250/1230-byte flight, even when active MTU probes are off.
+		InitialPacketSize:          uint16(spec.InitialPacketSpec.InitialPackets[0].PacketSize),
+		DisablePathMTUDiscovery:    config.DisablePathMTUDiscovery,
 		InitialStreamReceiveWindow: config.InitialStreamReceiveWindow, MaxStreamReceiveWindow: config.MaxStreamReceiveWindow,
 		InitialConnectionReceiveWindow: config.InitialConnectionReceiveWindow, MaxConnectionReceiveWindow: config.MaxConnectionReceiveWindow}
 	for _, version := range config.Versions {

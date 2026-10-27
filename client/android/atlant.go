@@ -445,13 +445,7 @@ func StartVPNWithUser(server, sni, pbk, user, serverPubKey, udpMode, tunAddr str
 		startTun(ctx, cfg, tunFd, ready)
 	}()
 	if err := <-ready; err != nil {
-		sessionCancel()
-		runWg.Wait()
-		mu.Lock()
-		isRunning = false
-		activeConfig = nil
-		cancelFunc = nil
-		mu.Unlock()
+		resetFailedVPNStart(sessionCancel)
 		return fmt.Errorf("initialize Android TUN: %w", err)
 	}
 	// In all-QUIC mode, report ready after the secure carrier is ready rather
@@ -460,16 +454,11 @@ func StartVPNWithUser(server, sni, pbk, user, serverPubKey, udpMode, tunAddr str
 		select {
 		case err := <-quicReady:
 			if err != nil && !IsAutoFallbackEnabled() {
-				sessionCancel()
-				runWg.Wait()
-				mu.Lock()
-				isRunning = false
-				activeConfig = nil
-				cancelFunc = nil
-				mu.Unlock()
+				resetFailedVPNStart(sessionCancel)
 				return fmt.Errorf("prepare QUIC carrier: %w", err)
 			}
 		case <-ctx.Done():
+			resetFailedVPNStart(sessionCancel)
 			return ctx.Err()
 		}
 	}
