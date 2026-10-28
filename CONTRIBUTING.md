@@ -1,20 +1,37 @@
 # Contributing to Atlant
 
-Use an isolated server and disposable profiles for development. Live network
-tests are opt-in; ordinary tests must not connect to production VPN accounts.
+Questions about setup belong in [Discussions](https://github.com/AtlantOne/atlant-core/discussions/categories/q-a).
+Use [Ideas](https://github.com/AtlantOne/atlant-core/discussions/categories/ideas)
+for proposals and Issues for reproducible bugs. English and Russian are welcome.
+You do not need to submit code to help: a clear reproduction or a measurement
+with its setup documented is useful too.
 
-Before submitting a change:
+## Reporting a bug
 
-1. Explain the observed problem and expected behavior, including platform and transport.
-2. Run the relevant module tests. Protocol changes also require interoperability
-   and negative authentication tests; document any wire compatibility change.
-3. Run UI tests with `node --test tests/ui/*.test.cjs` for interface changes.
-4. Run `python3 -m unittest discover -s management -p 'test_*.py'` for control changes.
-5. Never commit deployment keys, credentials, raw traffic captures, databases or
-   subscription links. Run `python3 scripts/release_audit.py --workspace`.
+Include the application and server versions, OS, selected transport, expected
+behavior and the shortest steps that reproduce the problem. A small redacted
+log is more useful than a whole configuration dump. Never publish subscription
+links, keys, passwords, user data or raw packet captures. Security-sensitive
+reports should follow [SECURITY.md](SECURITY.md), not a public issue.
 
-Include test results and known limitations in pull requests. Use synthetic data
-in issues. Report vulnerabilities through the channel described in SECURITY.md.
+## Sending a change
 
-Original contributions follow the license of their directory; see LICENSING.md.
-Keep upstream notices intact when modifying vendored code.
+Keep a pull request focused and explain what it changes. Use disposable users
+and an isolated test server, never a production account. From the repository root:
+
+```sh
+go -C shared test ./...
+go -C server test ./...
+go -C client/linux test ./...
+go -C client/android test -tags atlanttest ./...
+python3 -m unittest discover -s scripts -p 'test_release_audit.py'
+```
+
+Run the relevant module's `go vet ./...` too. Protocol changes need positive
+interoperability checks and negative authentication tests; say whether both
+ends need updating. Include your actual test results in the pull request.
+Android UI, Windows GUI and panel changes belong in their separate repositories.
+
+Tests stay in source control. Runtime profiles, signing keys, databases, private
+logs, captures and local build outputs do not. Follow the directory's license
+and preserve upstream notices; see [LICENSING.md](LICENSING.md).

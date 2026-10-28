@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible client, server or protocol problem
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For setup questions use Discussions. Never include subscription URLs,
+        account secrets, passwords, private keys or unredacted captures.
+        Report security-sensitive vulnerabilities through SECURITY.md.
+        English and Russian are welcome.
+  - type: input
+    id: versions
+    attributes:
+      label: Client and server versions
+      placeholder: Application release, core release, server release
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and device
+      placeholder: Android version/device, Windows version, or Linux distribution/architecture
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Selected transport
+      options:
+        - TCP / REALITY
+        - XHTTP / REALITY
+        - QUIC REALITY
+        - Split TCP and QUIC
+        - Not sure / unrelated
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: What happens and how to reproduce it
+      description: Include expected behavior and whether another transport behaves differently.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Short redacted log
+      description: Remove credentials, subscription links and personal network details. Do not paste the full configuration.
+      render: text
