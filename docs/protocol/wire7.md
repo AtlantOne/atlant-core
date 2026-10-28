@@ -1,7 +1,8 @@
 # Inside Atlant: TCP, XHTTP and direct QUIC REALITY
 
-Atlant combines three transports with key-based server authentication. A client
-profile contains the server address, pinned static X25519 public key and an
+Atlant combines TCP and QUIC with key-based server authentication; the TCP path
+supports direct REALITY and XHTTP over REALITY. A client profile contains the
+server address, pinned static X25519 public key and an
 individual user secret (PSK). Running the VPN does not require registering a
 domain or obtaining a certificate from a public CA.
 
@@ -23,9 +24,8 @@ paths. All three use the same account and subscription system.
 ## Why QUIC has its own handshake
 
 A TCP bootstrap in front of QUIC adds another connection and makes UDP depend
-on a successful TCP exchange. Ticket-based admission adds issuance, refresh
-and token-pool state. Atlant instead carries admission in the first QUIC
-handshake: the connection begins over UDP and stays on QUIC.
+on a successful TCP exchange. Atlant carries admission in the first QUIC
+handshake instead: the connection begins over UDP and stays on QUIC.
 
 QUIC also provides independent streams. A missing packet can delay a stream
 whose data it carries without imposing TCP's connection-wide delivery ordering

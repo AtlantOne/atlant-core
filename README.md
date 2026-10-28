@@ -1,17 +1,20 @@
 # Atlant Core
 
-Atlant is a VPN engine with TCP/REALITY, XHTTP and direct QUIC REALITY. You can
-run its VPN server on an IP address without registering a domain or obtaining
-a public TLS certificate.
+Atlant brings **TCP and QUIC** into one VPN, with REALITY-style authentication
+on both paths. The TCP side offers direct REALITY and XHTTP over REALITY;
+the QUIC side connects directly over UDP. You can run the VPN server on an IP
+address without registering your own domain or maintaining a public TLS certificate.
 
-Its most distinctive part is **direct QUIC REALITY**: Atlant's own construction
-that puts client admission and server authentication into the QUIC handshake.
-It starts over UDP. There is no preliminary TCP connection, ticket service or
-pool of access tokens to obtain before connecting.
+If you use VLESS/REALITY and Hysteria, the motivation will be familiar: keep
+the convenience of key-based deployment while also having QUIC for concurrent
+traffic. Atlant's own **QUIC REALITY** construction puts client admission and
+server authentication into the QUIC handshake itself. There is no preliminary
+TCP connection or separate HTTPS admission service.
 
-The same engine provides TCP/REALITY and XHTTP over REALITY, with native clients
-for Android, Windows and Linux. You can choose a transport for the network you
-are using rather than switch to a different VPN system.
+TCP remains available when UDP is unavailable or works poorly. Both paths
+share the same server profiles, users and subscriptions, with clients for
+Android, Windows and Linux. Choose the transport in the client, or carry TCP
+traffic over TCP and UDP traffic over QUIC without adding duplicate servers.
 
 ## What Atlant offers
 
@@ -23,14 +26,14 @@ are using rather than switch to a different VPN system.
   shape the client handshake; a cryptographic proof distinguishes authorized
   clients from ordinary incoming traffic. QUIC can relay failed admission to
   an operator-configured real HTTP/3 donor.
-- **Three transports in one protocol.** TCP, XHTTP and QUIC share the same
-  server and account system. Clients also support split transport selection,
-  such as TCP traffic over TCP and UDP traffic over QUIC.
+- **Two transport foundations: TCP and QUIC.** Direct REALITY and HTTP/2-based
+  XHTTP are available on the TCP path. Transport choice stays in the client,
+  so the same server profile can be used across different networks.
 - **Independent streams over QUIC.** Losing data on one stream does not impose
   TCP's connection-wide, in-order delivery wait on every other stream. This is
   especially useful when interactive requests share a connection with downloads.
-- **No QUIC bootstrap round trip over TCP.** Authentication travels with the
-  QUIC handshake itself, without a second transport or ticket refresh cycle.
+- **QUIC connects directly.** Authentication travels with the QUIC handshake
+  itself, without first establishing a separate TCP connection.
 - **An integrated server stack.** SQLite-backed accounts and subscriptions,
   shared subscription quotas across nodes, and an optional separate web panel
   cover deployment as well as tunneling.
@@ -75,11 +78,11 @@ details and [performance notes](docs/protocol/performance.md) for the I/O paths.
 | XHTTP/REALITY | HTTP/2 inside REALITY | When an HTTP-based tunnel fits your deployment better |
 | QUIC REALITY | Direct UDP with multiplexed QUIC streams | Concurrent traffic and interactive use on networks that allow UDP |
 
-QUIC's benefit is not simply a larger throughput number: independent streams
-change how packet loss affects concurrent requests. Throughput and latency
-still depend on the link, workload and congestion control. The
-[performance guide](docs/protocol/performance.md) explains the measurement
-methods and the implementation's I/O optimizations.
+QUIC is particularly interesting when bulk transfers and interactive requests
+share a connection: independent streams avoid TCP's connection-wide delivery
+ordering. TCP provides another path when the network does not suit UDP. The
+[performance guide](docs/protocol/performance.md) covers the implementation's
+I/O optimizations and measurement methods.
 
 ## Repositories
 
@@ -121,12 +124,12 @@ API on loopback and use an SSH tunnel for remote administration.
 Current profiles explicitly select `wire_version: 7`. Update the server and
 clients together when changing the wire format.
 
-## Security scope
+## Protocol documentation
 
-Atlant is in preview. It has not yet had an independent cryptographic audit.
-Its use of browser profiles and donor routing is not a claim that every packet
-or response is identical to a browser's. The [threat model](THREAT_MODEL.md)
-documents active-probing, metadata and client-OS boundaries in one place.
+The [handshake walkthrough](docs/protocol/wire7.md) explains authentication on
+both paths. The [threat model](THREAT_MODEL.md) describes the security boundaries,
+active probing and client-OS responsibilities. See [SECURITY.md](SECURITY.md)
+to report a vulnerability.
 
 ## Licensing
 
