@@ -136,9 +136,14 @@ func TestAgentRestartUsesCacheAndStopsCleanly(t *testing.T) {
 
 func TestAgentPortConflictDoesNotReplaceOrStopAnotherService(t *testing.T) {
 	agent := cachedAgent(t)
+	if err := os.Remove(filepath.Join(agent.config.Jobs[0].TLS.CacheDir, "subscription.pem")); err != nil {
+		t.Fatal(err)
+	}
 	agent.listener = func(string, string) (net.Listener, error) { return nil, errors.New("address in use") }
-	if err := agent.Run(context.Background()); err == nil {
-		t.Fatal("port conflict ignored")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := agent.Run(ctx); err != nil {
+		t.Fatal("agent should retain jobs for retry", err)
 	}
 	data, err := os.ReadFile(filepath.Join(agent.config.StateDir, "status.json"))
 	if err != nil || !strings.Contains(string(data), "no existing service was changed") {

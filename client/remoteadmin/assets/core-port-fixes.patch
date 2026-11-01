@@ -1,0 +1,217 @@
+--- a/shared/certificates/agent.go
++++ b/shared/certificates/agent.go
+@@ -6,7 +6,6 @@
+ 	"errors"
+ 	"github.com/gofrs/flock"
+ 	"net"
+-	"net/http"
+ 	"path/filepath"
+ 	"regexp"
+ 	"strconv"
+@@ -65,6 +64,14 @@
+ 	status      map[string]map[string]any
+ 	listener    func(string, string) (net.Listener, error)
+ 	configError string
++	broker      *challengeLease
++}
++
++func (a *Agent) listening() bool {
++	a.mu.Lock()
++	broker := a.broker
++	a.mu.Unlock()
++	return broker != nil && broker.listening()
+ }
+ 
+ func NewAgent(config AgentConfig) (*Agent, error) {
+@@ -105,15 +112,10 @@
+ 	if err := privateDirectory(challengeDir); err != nil {
+ 		return err
+ 	}
+-	listener, err := a.listener("tcp", a.config.ChallengeListen)
+-	if err != nil {
+-		_ = a.publish("agent", map[string]any{"error": "HTTP-01 port unavailable; no existing service was changed"})
+-		return errors.New("HTTP-01 port unavailable; configure one shared broker or release port 80 explicitly")
+-	}
+-	server := &http.Server{Handler: ChallengeBroker(challengeDir), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}
+-	defer server.Close()
+-	serveErrors := make(chan error, 1)
+-	go func() { serveErrors <- server.Serve(LimitListener(listener, 64)) }()
++	broker := &challengeLease{listen: a.listener, address: a.config.ChallengeListen, handler: ChallengeBroker(challengeDir)}
++	a.mu.Lock()
++	a.broker = broker
++	a.mu.Unlock()
+ 	workerCtx, cancel := context.WithCancel(ctx)
+ 	defer cancel()
+ 	var workers sync.WaitGroup
+@@ -123,12 +125,12 @@
+ 		workers.Add(1)
+ 		go func(job Job) {
+ 			defer workers.Done()
+-			if err := a.runJob(workerCtx, job, challengeDir, pool); err != nil {
++			if err := a.runJob(workerCtx, job, challengeDir, pool, broker.acquire); err != nil {
+ 				workerErrors <- err
+ 			}
+ 		}(job)
+ 	}
+-	if err = a.publish("agent", map[string]any{"phase": "running", "listening": true}); err != nil {
++	if err = a.publish("agent", map[string]any{"phase": "running", "listening": broker.listening()}); err != nil {
+ 		cancel()
+ 		workers.Wait()
+ 		return err
+@@ -142,13 +144,10 @@
+ 			err = nil
+ 			_ = a.publish("agent", map[string]any{"phase": "stopped", "listening": false})
+ 			break running
+-		case err = <-serveErrors:
+-			_ = a.publish("agent", map[string]any{"error": "HTTP-01 listener stopped"})
+-			break running
+ 		case err = <-workerErrors:
+ 			break running
+ 		case <-heartbeat.C:
+-			if err = a.publish("agent", map[string]any{"phase": "running", "listening": true}); err != nil {
++			if err = a.publish("agent", map[string]any{"phase": "running", "listening": broker.listening()}); err != nil {
+ 				break running
+ 			}
+ 		}
+@@ -158,7 +157,7 @@
+ 	return err
+ }
+ 
+-func (a *Agent) runJob(ctx context.Context, job Job, challengeDir string, pool chan struct{}) error {
++func (a *Agent) runJob(ctx context.Context, job Job, challengeDir string, pool chan struct{}, acquire func() (func(), error)) error {
+ 	options := job.TLS
+ 	options.ChallengeDir = challengeDir
+ 	options.RequireContext = true
+@@ -179,7 +178,13 @@
+ 				return nil
+ 			}
+ 			attempt, cancel := context.WithTimeout(ctx, 5*time.Minute)
+-			err := manager.Ensure(attempt)
++			release, err := acquire()
++			if err == nil {
++				err = manager.Ensure(attempt)
++				release()
++			} else {
++				manager.SetError("HTTP-01 port unavailable; no existing service was changed")
++			}
+ 			cancel()
+ 			<-pool
+ 			if err != nil {
+--- a/shared/certificates/supervisor.go
++++ b/shared/certificates/supervisor.go
+@@ -84,7 +84,7 @@
+ 				agent.configError = ""
+ 				agent.mu.Unlock()
+ 				if changed {
+-					if err := agent.publish("agent", map[string]any{"phase": "running", "listening": true}); err != nil {
++					if err := agent.publish("agent", map[string]any{"phase": "running", "listening": agent.listening()}); err != nil {
+ 						cancel()
+ 						<-done
+ 						return err
+@@ -101,7 +101,7 @@
+ 				agent.configError = "Certificate settings rejected; previous jobs retained"
+ 				agent.mu.Unlock()
+ 				if changed {
+-					if err := agent.publish("agent", map[string]any{"phase": "running", "listening": true}); err != nil {
++					if err := agent.publish("agent", map[string]any{"phase": "running", "listening": agent.listening()}); err != nil {
+ 						cancel()
+ 						<-done
+ 						return err
+--- /dev/null
++++ b/shared/certificates/listener_lease.go
+@@ -0,0 +1,52 @@
++package certificates
++
++import (
++	"net"
++	"net/http"
++	"sync"
++	"time"
++)
++
++// challengeLease shares HTTP-01 only between active issuance attempts, not
++// between idle renewal workers. The last attempt releases the listening port.
++type challengeLease struct {
++	mu      sync.Mutex
++	listen  func(string, string) (net.Listener, error)
++	address string
++	handler http.Handler
++	server  *http.Server
++	socket  net.Listener
++	users   int
++}
++
++func (b *challengeLease) acquire() (func(), error) {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	if b.server == nil {
++		ln, err := b.listen("tcp", b.address)
++		if err != nil {
++			return nil, err
++		}
++		b.server = &http.Server{Handler: b.handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}
++		server := b.server
++		b.socket = ln
++		go server.Serve(LimitListener(ln, 64))
++	}
++	b.users++
++	var once sync.Once
++	return func() {
++		once.Do(func() {
++			b.mu.Lock()
++			defer b.mu.Unlock()
++			b.users--
++			if b.users == 0 {
++				_ = b.socket.Close()
++				_ = b.server.Close()
++				b.server = nil
++				b.socket = nil
++			}
++		})
++	}, nil
++}
++
++func (b *challengeLease) listening() bool { b.mu.Lock(); defer b.mu.Unlock(); return b.server != nil }
+--- a/server/subscription_tls.go
++++ b/server/subscription_tls.go
+@@ -100,25 +100,25 @@
+ 	serviceCtx, stop := context.WithCancel(context.Background())
+ 	defer stop()
+ 	if c.TLS.Mode != "manual" {
+-		if c.TLS.ChallengeDir == "" {
+-			address := c.TLS.ChallengeListen
+-			if address == "" {
+-				address = ":80"
+-			}
+-			challengeListener, err := net.Listen("tcp", address)
+-			if err != nil {
+-				m.SetError("ACME HTTP-01 listener unavailable")
+-				log.Printf("[SUBSCRIPTION] ACME HTTP-01 listener unavailable; VPN unchanged: %v", err)
+-				return
+-			}
+-			challengeServer := &http.Server{Handler: http.HandlerFunc(m.ChallengeHandler), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}
+-			defer challengeServer.Close()
+-			go challengeServer.Serve(certificates.LimitListener(challengeListener, 64))
+-		}
+ 		_ = m.Reload()
+ 		issue := func() {
+ 			if !m.RenewalDue(time.Now()) {
+ 				return
++			}
++			if c.TLS.ChallengeDir == "" {
++				address := c.TLS.ChallengeListen
++				if address == "" {
++					address = ":80"
++				}
++				challengeListener, err := net.Listen("tcp", address)
++				if err != nil {
++					m.SetError("ACME HTTP-01 listener unavailable")
++					log.Printf("[SUBSCRIPTION] ACME HTTP-01 listener unavailable; VPN unchanged: %v", err)
++					return
++				}
++				challengeServer := &http.Server{Handler: http.HandlerFunc(m.ChallengeHandler), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}
++				defer challengeServer.Close()
++				go challengeServer.Serve(certificates.LimitListener(challengeListener, 64))
+ 			}
+ 			ctx, cancel := context.WithTimeout(serviceCtx, 5*time.Minute)
+ 			err := m.Ensure(ctx)

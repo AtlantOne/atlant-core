@@ -134,12 +134,12 @@ func dialRemote(cfg *Config, network, addr string) (net.Conn, error) {
 	}
 
 	// Transport dispatch
-	tr := strings.ToLower(cfg.Transport)
-	if tr == "xhttp" || strings.ToLower(cfg.TCPProto) == "xhttp" {
+	tr := linuxCarrier(cfg, network)
+	if tr == "xhttp" {
 		return dialXHTTPStream(cfg, network, addr)
 	}
 
-	if tr == "quic" || (network == "udp" && strings.ToLower(cfg.UDPProto) == "quic") || (network == "tcp" && strings.ToLower(cfg.TCPProto) == "quic") {
+	if tr == "quic" {
 		return dialQUICStream(cfg, network, addr)
 	}
 

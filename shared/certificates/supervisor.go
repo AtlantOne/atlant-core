@@ -84,7 +84,7 @@ func (s supervisor) run(ctx context.Context, path string) error {
 				agent.configError = ""
 				agent.mu.Unlock()
 				if changed {
-					if err := agent.publish("agent", map[string]any{"phase": "running", "listening": true}); err != nil {
+					if err := agent.publish("agent", map[string]any{"phase": "running", "listening": agent.listening()}); err != nil {
 						cancel()
 						<-done
 						return err
@@ -101,7 +101,7 @@ func (s supervisor) run(ctx context.Context, path string) error {
 				agent.configError = "Certificate settings rejected; previous jobs retained"
 				agent.mu.Unlock()
 				if changed {
-					if err := agent.publish("agent", map[string]any{"phase": "running", "listening": true}); err != nil {
+					if err := agent.publish("agent", map[string]any{"phase": "running", "listening": agent.listening()}); err != nil {
 						cancel()
 						<-done
 						return err

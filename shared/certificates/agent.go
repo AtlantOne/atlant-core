@@ -6,7 +6,6 @@ import (
 	"errors"
 	"github.com/gofrs/flock"
 	"net"
-	"net/http"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -65,6 +64,14 @@ type Agent struct {
 	status      map[string]map[string]any
 	listener    func(string, string) (net.Listener, error)
 	configError string
+	broker      *challengeLease
+}
+
+func (a *Agent) listening() bool {
+	a.mu.Lock()
+	broker := a.broker
+	a.mu.Unlock()
+	return broker != nil && broker.listening()
 }
 
 func NewAgent(config AgentConfig) (*Agent, error) {
@@ -105,15 +112,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := privateDirectory(challengeDir); err != nil {
 		return err
 	}
-	listener, err := a.listener("tcp", a.config.ChallengeListen)
-	if err != nil {
-		_ = a.publish("agent", map[string]any{"error": "HTTP-01 port unavailable; no existing service was changed"})
-		return errors.New("HTTP-01 port unavailable; configure one shared broker or release port 80 explicitly")
-	}
-	server := &http.Server{Handler: ChallengeBroker(challengeDir), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}
-	defer server.Close()
-	serveErrors := make(chan error, 1)
-	go func() { serveErrors <- server.Serve(LimitListener(listener, 64)) }()
+	broker := &challengeLease{listen: a.listener, address: a.config.ChallengeListen, handler: ChallengeBroker(challengeDir)}
+	a.mu.Lock()
+	a.broker = broker
+	a.mu.Unlock()
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var workers sync.WaitGroup
@@ -123,12 +125,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		workers.Add(1)
 		go func(job Job) {
 			defer workers.Done()
-			if err := a.runJob(workerCtx, job, challengeDir, pool); err != nil {
+			if err := a.runJob(workerCtx, job, challengeDir, pool, broker.acquire); err != nil {
 				workerErrors <- err
 			}
 		}(job)
 	}
-	if err = a.publish("agent", map[string]any{"phase": "running", "listening": true}); err != nil {
+	if err = a.publish("agent", map[string]any{"phase": "running", "listening": broker.listening()}); err != nil {
 		cancel()
 		workers.Wait()
 		return err
@@ -142,13 +144,10 @@ running:
 			err = nil
 			_ = a.publish("agent", map[string]any{"phase": "stopped", "listening": false})
 			break running
-		case err = <-serveErrors:
-			_ = a.publish("agent", map[string]any{"error": "HTTP-01 listener stopped"})
-			break running
 		case err = <-workerErrors:
 			break running
 		case <-heartbeat.C:
-			if err = a.publish("agent", map[string]any{"phase": "running", "listening": true}); err != nil {
+			if err = a.publish("agent", map[string]any{"phase": "running", "listening": broker.listening()}); err != nil {
 				break running
 			}
 		}
@@ -158,7 +157,7 @@ running:
 	return err
 }
 
-func (a *Agent) runJob(ctx context.Context, job Job, challengeDir string, pool chan struct{}) error {
+func (a *Agent) runJob(ctx context.Context, job Job, challengeDir string, pool chan struct{}, acquire func() (func(), error)) error {
 	options := job.TLS
 	options.ChallengeDir = challengeDir
 	options.RequireContext = true
@@ -179,7 +178,13 @@ func (a *Agent) runJob(ctx context.Context, job Job, challengeDir string, pool c
 				return nil
 			}
 			attempt, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			err := manager.Ensure(attempt)
+			release, err := acquire()
+			if err == nil {
+				err = manager.Ensure(attempt)
+				release()
+			} else {
+				manager.SetError("HTTP-01 port unavailable; no existing service was changed")
+			}
 			cancel()
 			<-pool
 			if err != nil {

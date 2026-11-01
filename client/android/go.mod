@@ -7,6 +7,7 @@ replace github.com/refraction-networking/utls => ../../third_party/utls
 replace github.com/refraction-networking/uquic => ../../third_party/uquic
 
 require (
+	atlant.local/remoteadmin v0.0.0
 	atlant.local/protocol v0.0.0
 	github.com/hashicorp/yamux v0.1.2
 	github.com/quic-go/quic-go v0.63.0
@@ -18,6 +19,8 @@ require (
 )
 
 replace atlant.local/protocol => ../../shared
+
+replace atlant.local/remoteadmin => ../remoteadmin
 
 require (
 	github.com/andybalholm/brotli v1.1.1 // indirect

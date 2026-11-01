@@ -100,25 +100,25 @@ func startSubscriptionServer(c SubscriptionConfig) {
 	serviceCtx, stop := context.WithCancel(context.Background())
 	defer stop()
 	if c.TLS.Mode != "manual" {
-		if c.TLS.ChallengeDir == "" {
-			address := c.TLS.ChallengeListen
-			if address == "" {
-				address = ":80"
-			}
-			challengeListener, err := net.Listen("tcp", address)
-			if err != nil {
-				m.SetError("ACME HTTP-01 listener unavailable")
-				log.Printf("[SUBSCRIPTION] ACME HTTP-01 listener unavailable; VPN unchanged: %v", err)
-				return
-			}
-			challengeServer := &http.Server{Handler: http.HandlerFunc(m.ChallengeHandler), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}
-			defer challengeServer.Close()
-			go challengeServer.Serve(certificates.LimitListener(challengeListener, 64))
-		}
 		_ = m.Reload()
 		issue := func() {
 			if !m.RenewalDue(time.Now()) {
 				return
+			}
+			if c.TLS.ChallengeDir == "" {
+				address := c.TLS.ChallengeListen
+				if address == "" {
+					address = ":80"
+				}
+				challengeListener, err := net.Listen("tcp", address)
+				if err != nil {
+					m.SetError("ACME HTTP-01 listener unavailable")
+					log.Printf("[SUBSCRIPTION] ACME HTTP-01 listener unavailable; VPN unchanged: %v", err)
+					return
+				}
+				challengeServer := &http.Server{Handler: http.HandlerFunc(m.ChallengeHandler), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}
+				defer challengeServer.Close()
+				go challengeServer.Serve(certificates.LimitListener(challengeListener, 64))
 			}
 			ctx, cancel := context.WithTimeout(serviceCtx, 5*time.Minute)
 			err := m.Ensure(ctx)

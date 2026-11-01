@@ -16,7 +16,7 @@ jobs:
           cache-dependency-path: '**/go.sum'
       - run: |
           set -euo pipefail
-          for module in shared server client/linux; do
+          for module in shared server client/linux client/remoteadmin; do
             go -C "$module" test -race ./...
             go -C "$module" vet ./...
           done

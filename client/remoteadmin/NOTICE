@@ -1,0 +1,7 @@
+The Go SSH bridge is original Atlant client code under MIT; see LICENSE.
+The separate Python administration adapters in assets/ extend Atlant Panel
+and follow its GPL-3.0-only license. Their corresponding sources are distributed
+here, with the complete panel sources available in AtlantOne/atlant-panel.
+The Docker image includes the core and panel with their respective licenses.
+The embedded core-port-fixes.patch follows the core's Apache-2.0 license;
+see LICENSE.core. It does not change the core's licensing terms.

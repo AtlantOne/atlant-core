@@ -14,6 +14,9 @@ import (
 )
 
 func main() {
+	if handleClientCLI(os.Args[1:]) {
+		return
+	}
 	cfg := parseConfig()
 	initLogging(cfg.LogLevel)
 	if cfg.Tun {
@@ -107,6 +110,7 @@ func main() {
 			}
 		}
 	}()
+	notifyClientCLIReady()
 
 	fmt.Printf("\n✓ Atlant VPN Linux Client is running!\n")
 	fmt.Printf("  • Server: %s (SNI: %s)\n", cfg.ServerAddr, cfg.SNI)
