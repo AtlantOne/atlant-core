@@ -356,8 +356,19 @@ func TestDockerBundleNoDefaultWebPortsOrPrivilegedMounts(t *testing.T) {
 		}
 	}
 	script, _ := assets.ReadFile("assets/install.py")
-	if !strings.Contains(string(script), "'--user','10001:10001'") {
-		t.Fatal("container runs as root")
+	runtime, _ := assets.ReadFile("assets/runtime.py")
+	bootstrap := string(runtime)
+	if !strings.Contains(bootstrap, "os.setgroups([]);os.setgid(10001);os.setuid(10001)") ||
+		!strings.Contains(bootstrap, "data[0]=Data(1<<10,1<<10,1<<10)") {
+		t.Fatal("runtime must retain only low-port binding after dropping root")
+	}
+	if strings.Index(bootstrap, "if __name__=='__main__':drop_runtime_privileges()") > strings.Index(bootstrap, "from atlantctl import") {
+		t.Fatal("private application modules must load after dropping root")
+	}
+	for _, capability := range []string{"NET_BIND_SERVICE", "SETUID", "SETGID"} {
+		if !strings.Contains(string(script), "'--cap-add','"+capability+"'") {
+			t.Fatal("missing constrained startup capability", capability)
+		}
 	}
 	for _, bad := range []string{"docker.sock", "--privileged", "-p 80:", "-p 443:"} {
 		if strings.Contains(string(script), bad) {
