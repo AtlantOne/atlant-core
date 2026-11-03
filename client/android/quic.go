@@ -376,14 +376,8 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 		sessionCache = quicSessionCache
 	}
 
-	// Synchronize SNI for QUIC with server (if empty or microsoft.com, use speed.cloudflare.com)
-	quicSNI := cfg.SNI
-	if quicSNI == "" || strings.Contains(strings.ToLower(quicSNI), "microsoft.com") {
-		quicSNI = "speed.cloudflare.com"
-	}
-
 	tlsConfig := &tls.Config{
-		ServerName:         quicSNI,
+		ServerName:         cfg.SNI,
 		InsecureSkipVerify: true,
 		ClientSessionCache: sessionCache,
 		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
@@ -394,10 +388,8 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 			if err != nil {
 				return err
 			}
-			if err := cert.VerifyHostname(quicSNI); err != nil && cert.Subject.CommonName != quicSNI {
-				if err2 := cert.VerifyHostname(cfg.SNI); err2 != nil && cert.Subject.CommonName != cfg.SNI {
-					return fmt.Errorf("peer cert does not match SNI %s: %w", quicSNI, err)
-				}
+			if err := cert.VerifyHostname(cfg.SNI); err != nil && cert.Subject.CommonName != cfg.SNI {
+				return fmt.Errorf("peer cert does not match SNI %s: %w", cfg.SNI, err)
 			}
 			return nil
 		},

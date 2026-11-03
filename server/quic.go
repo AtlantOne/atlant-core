@@ -3,6 +3,7 @@ package main
 import (
 	"atlant.local/protocol/quicpeer"
 	"atlant.local/protocol/quicreality"
+	"atlant.local/protocol/settings"
 	"atlant.local/protocol/wire"
 	"context"
 	"crypto/ecdh"
@@ -124,9 +125,8 @@ func serveUDPVPNServerReady(ctx context.Context, pc net.PacketConn, cfg *Config,
 	}
 
 	quicSNI := cfg.GetSNI()
-	if quicSNI == "" || strings.Contains(strings.ToLower(quicSNI), "microsoft.com") {
-		// Use genuine HTTP/3 donor on UDP:443
-		quicSNI = "speed.cloudflare.com"
+	if err := settings.ServerName(quicSNI); err != nil {
+		return fmt.Errorf("invalid QUIC SNI: %w", err)
 	}
 	serverObfKey := getServerObfKey(quicSNI)
 	if cfg.WireVersion != 7 {

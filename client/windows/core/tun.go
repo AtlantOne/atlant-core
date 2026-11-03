@@ -999,12 +999,18 @@ func handleUDP(ep tcpip.Endpoint, wq *waiter.Queue, cfg *Config, destAddr string
 	// DNS запросы (порт 53) изолированно направляем через надежный стрим-туннель:
 	// это исключает потерю пакетов и расхождение Transaction ID при пачке параллельных запросов
 	if strings.HasSuffix(destAddr, ":53") {
-		routeUDPViaTCP(gvisorConn, cfg, destAddr, firstPkt)
+		mode := strings.ToLower(cfg.TrafficMode)
+		useQUIC := mode == "udp" || (mode != "tcp" && (strings.EqualFold(cfg.UDPProto, "quic") || cfg.UDPProto == ""))
+		if useQUIC && !isUDPBlocked() {
+			routeDNSViaQUIC(gvisorConn, cfg, destAddr, firstPkt)
+		} else {
+			routeUDPViaTCP(gvisorConn, cfg, destAddr, firstPkt)
+		}
 		return
 	}
 
 	// Блокировка QUIC (UDP 443) для форсирования надежного HTTP/2 только в режиме TCP/full tunnel
-	if strings.HasSuffix(destAddr, ":443") && cfg.RouteMode == "all" && strings.ToLower(cfg.TrafficMode) != "udp" && !isTelegramIP(destAddr) {
+	if strings.HasSuffix(destAddr, ":443") && cfg.RouteMode == "all" && (strings.EqualFold(cfg.TrafficMode, "tcp") || (!strings.EqualFold(cfg.TrafficMode, "udp") && strings.EqualFold(cfg.UDPProto, "tcp"))) && !isTelegramIP(destAddr) {
 		return
 	}
 

@@ -19,21 +19,37 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestQUICUDPStreamKeepsVideoPacketsWithoutTCPFallback(t *testing.T) {
 	for _, target := range []string{"video.example:443", "video.example:4443"} {
-		t.Run(target, func(t *testing.T) { testVideoUDPStream(t, target, false) })
+		t.Run(target, func(t *testing.T) { testVideoUDPStream(t, target, false, "localhost") })
 	}
 }
 
 func TestQUICDatagramsKeepGrowingGamePackets(t *testing.T) {
-	testVideoUDPStream(t, "game.example:22023", true)
+	testVideoUDPStream(t, "game.example:22023", true, "localhost")
 }
 
-func testVideoUDPStream(t *testing.T, target string, datagrams bool) {
+func TestQUICUsesConfiguredSNI(t *testing.T) {
+	for _, sni := range []string{"www.microsoft.com", "microsoft.com.example", "custom.example"} {
+		t.Run(sni, func(t *testing.T) { testVideoUDPStream(t, "game.example:22023", true, sni) })
+	}
+}
+
+func TestMixedDNSUsesQUICWithTCPSocketsForbidden(t *testing.T) {
+	tcp, fake, remote := GetTCPProto(), IsFakeDnsEnabled(), IsRemoteDnsEnabled()
+	SetTCPProto("tcp")
+	SetFakeDnsEnabled(false)
+	SetRemoteDns(true)
+	defer func() { SetTCPProto(tcp); SetFakeDnsEnabled(fake); SetRemoteDns(remote) }()
+	testVideoUDPStream(t, "resolver.example:53", false, "localhost")
+}
+
+func testVideoUDPStream(t *testing.T, target string, datagrams bool, sni string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	key := bytes.Repeat([]byte{7}, 32)
@@ -41,12 +57,16 @@ func testVideoUDPStream(t *testing.T, target string, datagrams bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	template := &x509.Certificate{SerialNumber: big.NewInt(7), DNSNames: []string{"localhost"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	template := &x509.Certificate{SerialNumber: big.NewInt(7), DNSNames: []string{sni}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &private.PublicKey, private)
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: private}}, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true})
+	observedSNI := make(chan string, 1)
+	listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		observedSNI <- hello.ServerName
+		return nil, nil
+	}, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: private}}, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +147,12 @@ func testVideoUDPStream(t *testing.T, target string, datagrams bool) {
 	protectorMu.RLock()
 	previousProtector := protector
 	protectorMu.RUnlock()
-	SetSocketProtector(testSocketProtector{})
+	guard := &noTCPProtector{}
+	if strings.HasSuffix(target, ":53") {
+		SetSocketProtector(guard)
+	} else {
+		SetSocketProtector(testSocketProtector{})
+	}
 	defer SetSocketProtector(previousProtector)
 	previousFallback := IsAutoFallbackEnabled()
 	SetAutoFallback(false)
@@ -138,11 +163,13 @@ func testVideoUDPStream(t *testing.T, target string, datagrams bool) {
 	packet, app := net.Pipe()
 	defer app.Close()
 	_ = app.SetDeadline(time.Now().Add(8 * time.Second))
-	cfg := &Config{runCtx: ctx, ServerAddr: listener.Addr().String(), SNI: "localhost", PBK: hex.EncodeToString(key), User: "alice", UDPProto: "quic", UDPMode: "quic", PaddingEnabled: true, MinPadding: 32, MaxPadding: 256}
+	cfg := &Config{runCtx: ctx, ServerAddr: listener.Addr().String(), SNI: sni, PBK: hex.EncodeToString(key), User: "alice", UDPProto: "quic", UDPMode: "quic", PaddingEnabled: true, MinPadding: 32, MaxPadding: 256}
 	relayDone := make(chan struct{})
 	go func() {
 		defer close(relayDone)
-		if datagrams {
+		if strings.HasSuffix(target, ":53") {
+			handleUDPConn(packet, cfg, target)
+		} else if datagrams {
 			handleUDPViaDatagramTunnel(packet, cfg, target)
 		} else {
 			routeUDPViaQUICStream(packet, cfg, target, nil)
@@ -164,6 +191,14 @@ func testVideoUDPStream(t *testing.T, target string, datagrams bool) {
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case got := <-observedSNI:
+		if got != sni {
+			t.Fatalf("ClientHello SNI=%q, want %q", got, sni)
+		}
+	default:
+		t.Fatal("ClientHello was not observed")
+	}
 	if isUDPBlocked() {
 		t.Fatal("MTU limitation incorrectly marked the UDP network blocked")
 	}
@@ -178,6 +213,9 @@ func testVideoUDPStream(t *testing.T, target string, datagrams bool) {
 	quicClientMu.Unlock()
 	if pooled == nil || pooled.Context().Err() != nil {
 		t.Fatal("closing a UDP stream must not kill the pooled QUIC connection")
+	}
+	if guard.denied.Load() != 0 {
+		t.Fatal("Mixed QUIC DNS attempted TCP socket")
 	}
 	t.Logf("%d bytes echoed intact over authenticated QUIC, with TCP fallback disabled", total)
 }

@@ -8,7 +8,7 @@ func TestDNSUsesSelectedQUICCarrier(t *testing.T) {
 		blocked, want bool
 	}{
 		{"quic", "quic", false, true}, {"udp", "quic", false, true},
-		{"tcp", "quic", false, false}, {"xhttp", "quic", false, false},
+		{"tcp", "quic", false, true}, {"xhttp", "quic", false, true},
 		{"quic", "tcp", false, false}, {"quic", "quic", true, false},
 	} {
 		if got := dnsViaQUIC(test.tcp, test.udp, test.blocked); got != test.want {

@@ -67,9 +67,13 @@ func testBudget(sub, node string) *nodeBudget {
 func TestGlobalQuotaThreeNodesConcurrentExactLimit(t *testing.T) {
 	s, _ := quotaFixture(t, 13<<20)
 	budgets := []*nodeBudget{}
+	stop := make(chan struct{})
+	defer close(stop)
 	for _, name := range []string{"node1", "node2", "node3"} {
 		quotaTestNode(t, name, s.ID)
-		budgets = append(budgets, testBudget(s.ID, name))
+		budget := testBudget(s.ID, name)
+		budget.stop = stop
+		budgets = append(budgets, budget)
 	}
 	var accepted atomic.Int64
 	var wg sync.WaitGroup
@@ -86,6 +90,7 @@ func TestGlobalQuotaThreeNodesConcurrentExactLimit(t *testing.T) {
 	}
 	wg.Wait()
 	for _, b := range budgets {
+		b.prefetchWG.Wait()
 		b.mu.Lock()
 		err := b.syncLocked(b.grant != "", 0)
 		b.mu.Unlock()

@@ -14,6 +14,7 @@ import (
 )
 
 const quotaChunk = int64(4 << 20)
+const quotaMaxReservation = int64(64 << 20)
 const quotaMaxValue = int64(1 << 60)
 
 var errQuotaClock = errors.New("quota request clock mismatch")
@@ -39,6 +40,7 @@ type quotaReply struct {
 	ValidSeconds   int64  `json:"valid_seconds"`
 	ReservedAccess bool   `json:"reserved_access,omitempty"`
 	ExpiresAt      int64  `json:"expires_at,omitempty"`
+	CanTopUp       bool   `json:"can_top_up,omitempty"`
 }
 
 type quotaSnapshot struct {
@@ -113,7 +115,7 @@ func writeSubscriptionQuota(ctx context.Context, tx *sql.Tx, s SubscriptionRecor
 // reservations across all nodes, including concurrent requests after a restart.
 func processQuota(ctx context.Context, db *sql.DB, node string, r quotaRequest, now time.Time) (quotaReply, error) {
 	var reply quotaReply
-	if !validQuotaID(r.ID) || !validQuotaID(r.Session) || !validQuotaID(r.Subscription) || (r.Grant != "" && !validQuotaID(r.Grant)) || r.Up < 0 || r.Down < 0 || r.Up > quotaMaxValue || r.Down > quotaMaxValue || r.Up > quotaMaxValue-r.Down || r.Want < 0 || r.Want > quotaChunk {
+	if !validQuotaID(r.ID) || !validQuotaID(r.Session) || !validQuotaID(r.Subscription) || (r.Grant != "" && !validQuotaID(r.Grant)) || r.Up < 0 || r.Down < 0 || r.Up > quotaMaxValue || r.Down > quotaMaxValue || r.Up > quotaMaxValue-r.Down || r.Want < 0 || r.Want > quotaMaxReservation {
 		return reply, errors.New("invalid quota request")
 	}
 	raw, _ := json.Marshal(r)
@@ -183,7 +185,23 @@ func processQuota(ctx context.Context, db *sql.DB, node string, r quotaRequest, 
 		if q.Reserved < 0 {
 			return reply, errors.New("invalid reservation balance")
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE quota_grants SET up=?,down=?,closed=?,updated_at=? WHERE id=?`, r.Up, r.Down, r.Close, now.Unix(), r.Grant); err != nil {
+		if valid && !r.Close && r.Want > 0 {
+			available := quotaMaxValue - q.Up - q.Down - q.Reserved
+			if q.Total > 0 {
+				available = q.Total - q.Up - q.Down - q.Reserved
+			}
+			amount := r.Want
+			for _, bound := range []int64{available, quotaMaxReservation - (capacity - r.Up - r.Down), quotaMaxValue - capacity} {
+				if amount > bound {
+					amount = bound
+				}
+			}
+			amount = max(int64(0), amount)
+			capacity += amount
+			q.Reserved += amount
+			reply.Capacity = capacity
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE quota_grants SET capacity=?,up=?,down=?,closed=?,updated_at=? WHERE id=?`, capacity, r.Up, r.Down, r.Close, now.Unix(), r.Grant); err != nil {
 			return reply, err
 		}
 	} else if r.Up != 0 || r.Down != 0 || r.Close {
@@ -220,6 +238,7 @@ func processQuota(ctx context.Context, db *sql.DB, node string, r quotaRequest, 
 			}
 		}
 	}
+	reply.CanTopUp = true
 	reply.Allowed = valid && reply.Grant != "" && (q.Total == 0 || (q.Up+q.Down < q.Total && q.Up+q.Down+q.Reserved <= q.Total))
 	if reply.Allowed {
 		reply.ReservedAccess = true
@@ -238,7 +257,7 @@ func processQuota(ctx context.Context, db *sql.DB, node string, r quotaRequest, 
 	}
 	data, _ := json.Marshal(reply)
 	retention := int64(300)
-	if r.Close || (r.Grant == "" && r.Want > 0) {
+	if r.Close || r.Want > 0 {
 		retention = 7 * 86400
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO quota_requests VALUES(?,?,?,?,?)`, node, r.ID, digest, data, now.Unix()+retention); err != nil {

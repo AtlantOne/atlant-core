@@ -952,18 +952,9 @@ func getSession(cfg *Config) (_ *yamux.Session, err error) {
 		sessionCond.Wait()
 	}
 
-	// Check if we have a valid session with 12-minute anti-tracking rotation
+	// Keep a healthy session until disconnect or a network/profile change.
 	if session != nil && !session.IsClosed() && !sessionDead {
-		if time.Since(lastConnectTime) < 12*time.Minute {
-			return session, nil
-		}
-		log.Printf("[REALITY] Rotating Yamux session after %v to defeat DPI tracking", time.Since(lastConnectTime).Round(time.Second))
-		oldSess := session
-		session = nil
-		go func() {
-			time.Sleep(30 * time.Second)
-			_ = oldSess.Close()
-		}()
+		return session, nil
 	}
 
 	if strings.ToLower(cfg.Transport) == "xhttp" {

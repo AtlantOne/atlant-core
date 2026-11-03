@@ -200,15 +200,7 @@ func getYamuxSession(cfg *Config) (_ *yamux.Session, err error) {
 	defer sessMu.Unlock()
 
 	if session != nil && !session.IsClosed() && !sessionDead {
-		if time.Since(lastConnectTime) < 12*time.Minute {
-			return session, nil
-		}
-		oldSess := session
-		session = nil
-		go func() {
-			time.Sleep(30 * time.Second)
-			_ = oldSess.Close()
-		}()
+		return session, nil
 	}
 
 	if err := sessionDialCooldown.RetryError(time.Now()); err != nil {

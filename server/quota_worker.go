@@ -45,6 +45,14 @@ type nodeBudget struct {
 	lastTimingLog         time.Time
 	refresh               *quotaRefresh
 	stop                  <-chan struct{}
+	canTopUp              bool
+	prefetching           bool
+	prefetchWG            sync.WaitGroup
+	prefetchRetry         time.Time
+	usageStart            time.Time
+	usageBytes            int64
+	byteRate              float64
+	refreshLatency        time.Duration
 }
 
 type quotaRefresh struct {
@@ -128,8 +136,10 @@ func (b *nodeBudget) syncLocked(closeGrant bool, want int64) error {
 	b.refresh = inflight
 	b.mu.Unlock()
 	reply, err := b.call(ctx, request)
-	recordQuotaTiming(time.Since(started), err != nil)
+	elapsed := time.Since(started)
+	recordQuotaTiming(elapsed, err != nil)
 	b.mu.Lock()
+	b.refreshLatency = max(elapsed, b.refreshLatency*3/4)
 	inflight.err = err
 	b.refresh = nil
 	close(inflight.done)
@@ -157,6 +167,7 @@ func (b *nodeBudget) syncLocked(closeGrant bool, want int64) error {
 		b.up, b.down = 0, 0
 	}
 	b.grant, b.capacity, b.allowed = reply.Grant, reply.Capacity, reply.Allowed
+	b.canTopUp = reply.CanTopUp
 	b.deadline = deadline
 	b.authorization.Store(&quotaAuthorization{allowed: b.allowed, deadline: b.deadline, reserved: reply.ReservedAccess, expiresAt: reply.ExpiresAt})
 	if !b.allowed {
@@ -183,6 +194,8 @@ func (b *nodeBudget) consume(up, down uint64) bool {
 		(b.pending == nil || !b.pending.Close) && b.capacity-b.up-b.down >= amount {
 		b.up += int64(up)
 		b.down += int64(down)
+		b.noteUsageLocked(amount)
+		b.queueTopUpLocked()
 		return true
 	}
 	if !b.allowed && time.Now().Before(b.retryAfter) {
@@ -208,7 +221,12 @@ func (b *nodeBudget) consume(up, down uint64) bool {
 				return false
 			}
 		}
-		if b.syncLocked(b.grant != "", quotaChunk) != nil || !b.allowed || b.capacity-b.up-b.down < amount {
+		closeGrant := b.grant != "" && !b.canTopUp
+		want := quotaChunk
+		if b.canTopUp {
+			want = max(amount, b.reserveTargetLocked()-(b.capacity-b.up-b.down))
+		}
+		if b.syncLocked(closeGrant, want) != nil || !b.allowed || b.capacity-b.up-b.down < amount {
 			return false
 		}
 	}
@@ -217,7 +235,79 @@ func (b *nodeBudget) consume(up, down uint64) bool {
 	}
 	b.up += int64(up)
 	b.down += int64(down)
+	b.noteUsageLocked(amount)
+	b.queueTopUpLocked()
 	return true
+}
+
+// Keep enough confirmed credit for measured traffic while a coordinator RPC
+// runs. Idle nodes retain the small initial grant; busy nodes grow up to 64 MiB.
+func (b *nodeBudget) reserveTargetLocked() int64 {
+	horizon := max(5*time.Second, 2*b.refreshLatency+2*time.Second)
+	target := float64(2*quotaChunk) + b.byteRate*horizon.Seconds()
+	if target >= float64(quotaMaxReservation) {
+		return quotaMaxReservation
+	}
+	return int64(target)
+}
+
+func (b *nodeBudget) noteUsageLocked(amount int64) {
+	now := time.Now()
+	if b.usageStart.IsZero() || now.Sub(b.usageStart) > 10*time.Second {
+		b.usageStart = now
+		b.usageBytes = 0
+		b.byteRate = 0
+	}
+	b.usageBytes += amount
+	if elapsed := now.Sub(b.usageStart); elapsed >= 100*time.Millisecond {
+		b.byteRate = float64(b.usageBytes) / elapsed.Seconds()
+		b.usageStart = now
+		b.usageBytes = 0
+	}
+}
+
+// The packet path only schedules this work. A top-up never returns existing
+// credit to the coordinator, so other flows may keep spending confirmed bytes.
+func (b *nodeBudget) queueTopUpLocked() {
+	if !b.canTopUp || b.stop == nil || b.prefetching || b.retired.Load() || !b.valid() ||
+		b.grant == "" || (b.pending != nil && b.pending.Close) || time.Now().Before(b.prefetchRetry) ||
+		b.capacity-b.up-b.down >= b.reserveTargetLocked()/2 {
+		return
+	}
+	select {
+	case <-b.stop:
+		return
+	default:
+	}
+	b.prefetching = true
+	b.prefetchWG.Add(1)
+	go func() {
+		defer b.prefetchWG.Done()
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		defer func() { b.prefetching = false }()
+		if b.retired.Load() {
+			return
+		}
+		if b.refresh != nil || b.pending != nil {
+			if err := b.syncLocked(false, 0); err != nil {
+				b.prefetchRetry = time.Now().Add(time.Second)
+				return
+			}
+		}
+		if b.retired.Load() || !b.valid() || !b.canTopUp || b.grant == "" {
+			return
+		}
+		remaining := b.capacity - b.up - b.down
+		if target := b.reserveTargetLocked(); remaining < target/2 {
+			capacity := b.capacity
+			if err := b.syncLocked(false, target-remaining); err != nil {
+				b.prefetchRetry = time.Now().Add(time.Second)
+			} else if b.capacity <= capacity {
+				b.prefetchRetry = time.Now().Add(2 * time.Second)
+			}
+		}
+	}()
 }
 
 type quotaWorker struct {
@@ -377,7 +467,7 @@ func remoteQuotaCall(endpoint, node, token string, client *http.Client) quotaCal
 			return reply, errors.New("invalid quota reply")
 		}
 		err = json.Unmarshal(data, &reply)
-		if err == nil && (reply.Capacity < 0 || reply.Capacity > quotaChunk || reply.ValidSeconds < 0 || reply.ValidSeconds > 6 || reply.ExpiresAt < 0 || (reply.ReservedAccess && reply.Allowed && (reply.Grant == "" || reply.ValidSeconds == 0)) || (reply.Grant != "" && !validQuotaID(reply.Grant))) {
+		if err == nil && (reply.Capacity < 0 || reply.Capacity > quotaMaxValue || reply.ValidSeconds < 0 || reply.ValidSeconds > 6 || reply.ExpiresAt < 0 || (reply.ReservedAccess && reply.Allowed && (reply.Grant == "" || reply.ValidSeconds == 0)) || (reply.Grant != "" && !validQuotaID(reply.Grant))) {
 			err = errors.New("invalid quota reply fields")
 		}
 		return reply, err
@@ -502,10 +592,15 @@ func stopQuotaWorker() {
 	w.mu.RLock()
 	budgets := make([]*nodeBudget, 0, len(w.budgets))
 	for _, b := range w.budgets {
-		b.retired.Store(true)
 		budgets = append(budgets, b)
 	}
 	w.mu.RUnlock()
+	for _, b := range budgets {
+		b.mu.Lock()
+		b.retired.Store(true)
+		b.mu.Unlock()
+		b.prefetchWG.Wait()
+	}
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, 8)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

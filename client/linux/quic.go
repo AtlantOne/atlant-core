@@ -170,14 +170,8 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 		ConnectionIDGenerator: generator,
 	}
 
-	// Synchronize SNI for QUIC with server (if empty or microsoft.com, use speed.cloudflare.com)
-	quicSNI := cfg.SNI
-	if quicSNI == "" || strings.Contains(strings.ToLower(quicSNI), "microsoft.com") {
-		quicSNI = "speed.cloudflare.com"
-	}
-
 	tlsConfig := &tls.Config{
-		ServerName:         quicSNI,
+		ServerName:         cfg.SNI,
 		InsecureSkipVerify: true,
 		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			if len(rawCerts) == 0 {

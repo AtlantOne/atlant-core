@@ -17,6 +17,14 @@ import (
 )
 
 func TestInboundControllerQUICMetadataPreservesSessionAndListenerChangesReauthenticate(t *testing.T) {
+	testInboundControllerQUICWithSNI(t, "localhost.")
+}
+
+func TestInboundControllerQUICUsesConfiguredMicrosoftSNI(t *testing.T) {
+	testInboundControllerQUICWithSNI(t, "www.microsoft.com")
+}
+
+func testInboundControllerQUICWithSNI(t *testing.T, sni string) {
 	isolateUsers(t)
 	key := bytes.Repeat([]byte{0x51}, 32)
 	if err := updateUsers(cfg.UsersFile, func(db *userDB) error {
@@ -28,7 +36,7 @@ func TestInboundControllerQUICMetadataPreservesSessionAndListenerChangesReauthen
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	record := inboundRecordFixture(t, "quic", freeInboundAddress(t))
-	record.Settings.SNI = "localhost."
+	record.Settings.SNI = sni
 	record.Settings.Transports = []string{"quic"}
 	catalog := inboundCatalog{Initialized: true, Revision: 1, Inbounds: []inboundRecord{record}}
 	previous := activeInboundSet.Load()

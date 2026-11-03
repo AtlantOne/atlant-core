@@ -270,14 +270,8 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 		ConnectionIDGenerator: generator,
 	}
 
-	// Synchronize SNI for QUIC with server (if empty or microsoft.com, use speed.cloudflare.com)
-	quicSNI := cfg.SNI
-	if quicSNI == "" || strings.Contains(strings.ToLower(quicSNI), "microsoft.com") {
-		quicSNI = "speed.cloudflare.com"
-	}
-
 	tlsConfig := &tls.Config{
-		ServerName:         quicSNI,
+		ServerName:         cfg.SNI,
 		InsecureSkipVerify: true,
 		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			if len(rawCerts) == 0 {
@@ -287,10 +281,8 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 			if err != nil {
 				return err
 			}
-			if err := cert.VerifyHostname(quicSNI); err != nil && cert.Subject.CommonName != quicSNI {
-				if err2 := cert.VerifyHostname(cfg.SNI); err2 != nil && cert.Subject.CommonName != cfg.SNI {
-					return fmt.Errorf("peer cert does not match SNI %s: %w", quicSNI, err)
-				}
+			if err := cert.VerifyHostname(cfg.SNI); err != nil && cert.Subject.CommonName != cfg.SNI {
+				return fmt.Errorf("peer cert does not match SNI %s: %w", cfg.SNI, err)
 			}
 			return nil
 		},
@@ -672,4 +664,19 @@ func routeUDPViaTCP(gvisorConn net.Conn, cfg *Config, destAddr string, initialPa
 		}
 	}()
 	wg.Wait()
+}
+
+func routeDNSViaQUIC(packet net.Conn, cfg *Config, target string, initial []byte) {
+	stream, err := dialQUICStream(cfg, "udp", target)
+	if err != nil {
+		if cfg.AutoFallback {
+			routeUDPViaTCP(packet, cfg, target, initial)
+		} else {
+			log.Printf("[ERROR] [DNS] QUIC dial failed: %v", err)
+		}
+		return
+	}
+	if err := wire.RelayUDPStream(packet, stream, initial, wire.UDPStreamOptions{Context: context.Background(), ReadIdle: 3 * time.Second, WriteIdle: 10 * time.Second, OnResponse: learnDNSResponse}); err != nil {
+		log.Printf("[DNS] QUIC stream ended: %v", err)
+	}
 }
