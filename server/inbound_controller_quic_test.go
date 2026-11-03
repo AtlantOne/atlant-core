@@ -16,7 +16,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-func TestInboundControllerQUICApplyClosesOldSessionAndAuthenticatesAgain(t *testing.T) {
+func TestInboundControllerQUICMetadataPreservesSessionAndListenerChangesReauthenticate(t *testing.T) {
 	isolateUsers(t)
 	key := bytes.Repeat([]byte{0x51}, 32)
 	if err := updateUsers(cfg.UsersFile, func(db *userDB) error {
@@ -75,6 +75,32 @@ func TestInboundControllerQUICApplyClosesOldSessionAndAuthenticatesAgain(t *test
 	first := ping()
 	candidate := inboundCatalog{Initialized: true, Revision: 2, Inbounds: append([]inboundRecord(nil), catalog.Inbounds...)}
 	candidate.Inbounds[0].Settings.Name = "Applied QUIC"
+	if restored, err := c.Apply(candidate); restored || err != nil {
+		t.Fatal(restored, err)
+	}
+	select {
+	case <-first.Context().Done():
+		t.Fatal("renaming the inbound closed an authenticated QUIC session")
+	default:
+	}
+	stream, err := first.OpenStreamSync(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := wire.WriteQUICHeader(stream, wire.QUICHeader{UserTag: getUserTag("alice"), Protocol: 0x11, Destination: "speedtest:80"}, 32, 256); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(stream, "PING apply\n"); err != nil {
+		t.Fatal(err)
+	}
+	if reply, err := bufio.NewReader(stream).ReadString('\n'); err != nil || reply != "PONG apply\n" {
+		t.Fatal("session unusable after rename", reply, err)
+	}
+	stream.Close()
+	stream.CancelRead(0)
+	candidate.Revision++
+	candidate.Inbounds[0].Settings.Quic.KeepAlivePeriodSec = 5
 	if restored, err := c.Apply(candidate); restored || err != nil {
 		t.Fatal(restored, err)
 	}

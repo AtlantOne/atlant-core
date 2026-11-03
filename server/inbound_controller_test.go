@@ -38,7 +38,7 @@ func TestInboundControllerAppliesGenerationWithoutStoppingSupervisor(t *testing.
 			t.Fatal(restored, err)
 		}
 		assertInboundListening(t, candidate.Inbounds[0].Settings.Listen)
-		if c.ctx.Err() != nil || activeInboundSet.Load().revision != candidate.Revision {
+		if c.ctx.Err() != nil || activeInboundSet.Load().appliedRevision() != candidate.Revision {
 			t.Fatal("planned stop killed supervisor")
 		}
 	}
@@ -49,6 +49,53 @@ func TestInboundControllerAppliesGenerationWithoutStoppingSupervisor(t *testing.
 	old.Close()
 	if _, err := c.Apply(original); err == nil {
 		t.Fatal("stale revision accepted")
+	}
+}
+
+func TestInboundProfileMetadataUpdatesWithoutClosingConnections(t *testing.T) {
+	c, original := controllerFixture(t)
+	connection, err := net.DialTimeout("tcp", original.Inbounds[0].Settings.Listen, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	running := c.current
+	candidate := original
+	candidate.Revision++
+	candidate.Inbounds = append([]inboundRecord(nil), original.Inbounds...)
+	candidate.Inbounds[0].Settings.Name = "Renamed server"
+	candidate.Inbounds[0].Settings.AdvertiseAddr = "updated.example.com:1026"
+	var saved inboundCatalog
+	c.persist = func(value inboundCatalog) error { saved = value; return nil }
+	if restored, err := c.Apply(candidate); restored || err != nil {
+		t.Fatal(restored, err)
+	}
+	if c.current != running || running.ctx.Err() != nil || running.appliedRevision() != candidate.Revision {
+		t.Fatal("metadata update replaced the listener generation")
+	}
+	if saved.Revision != candidate.Revision || saved.Inbounds[0].Settings.Name != "Renamed server" {
+		t.Fatal("new subscription metadata was not persisted")
+	}
+	connection.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
+	_, err = connection.Read(make([]byte, 1))
+	if networkError, ok := err.(net.Error); !ok || !networkError.Timeout() {
+		t.Fatal("connection was closed during metadata edit", err)
+	}
+}
+
+func TestInboundProfileMetadataPersistenceFailureKeepsWorkingGeneration(t *testing.T) {
+	c, original := controllerFixture(t)
+	candidate := original
+	candidate.Revision++
+	candidate.Inbounds = append([]inboundRecord(nil), original.Inbounds...)
+	candidate.Inbounds[0].Settings.Name = "Not committed"
+	running := c.current
+	c.persist = func(inboundCatalog) error { return errors.New("fixture persistence failure") }
+	if _, err := c.Apply(candidate); err == nil {
+		t.Fatal("failed persistence reported success")
+	}
+	if c.current != running || running.ctx.Err() != nil || running.appliedRevision() != original.Revision || c.applied.Revision != original.Revision {
+		t.Fatal("failed metadata write changed the running listener")
 	}
 }
 

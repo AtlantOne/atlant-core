@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -482,17 +483,23 @@ func startDecoyTrafficGenerator(cfg *Config) {
 
 func runQUICDatagramDispatcher(conn quicpeer.ClientConn) {
 	ctx := conn.Context()
+	var assembler wire.DatagramAssembler
 	for {
 		dgram, err := conn.ReceiveDatagram(ctx)
 		if err != nil {
 			break
+		}
+		var complete bool
+		dgram, complete = assembler.Decode(dgram, 4, time.Now())
+		if !complete {
+			continue
 		}
 		// Expected format from server: [4B flowID][2B destLen][destAddr][payload]
 		if len(dgram) < 6 {
 			continue
 		}
 		flowID := binary.BigEndian.Uint32(dgram[:4])
-		destLen := int(binary.BigEndian.Uint16(dgram[4:6]))
+		destLen := int(binary.BigEndian.Uint16(dgram[4:6]) & wire.DatagramDestinationMask)
 		if len(dgram) < 6+destLen {
 			continue
 		}
@@ -594,10 +601,6 @@ func startUDPRecoveryProbe(cfg *Config) {
 }
 
 func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr string) bool {
-	if preferQUICUDPStream(destAddr) {
-		routeUDPViaQUICStream(gvisorConn, cfg, destAddr, nil)
-		return true
-	}
 	_ = gvisorConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	firstBuf := make([]byte, 65536)
 	firstN, err := gvisorConn.Read(firstBuf)
@@ -630,19 +633,14 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 		pkt := make([]byte, 4+4+2+len(destBytes)+len(payload))
 		copy(pkt[:4], userTag[:])
 		binary.BigEndian.PutUint32(pkt[4:8], flowID)
-		binary.BigEndian.PutUint16(pkt[8:10], uint16(len(destBytes)))
+		binary.BigEndian.PutUint16(pkt[8:10], uint16(len(destBytes))|wire.DatagramFragmentsSupported)
 		copy(pkt[10:10+len(destBytes)], destBytes)
 		copy(pkt[10+len(destBytes):], payload)
 		quicPacer.Pace(len(pkt))
-		return conn.SendDatagram(pkt)
+		return wire.SendTunnelDatagram(pkt, 8, conn.SendDatagram)
 	}
 
 	if err := sendDgram(firstBuf[:firstN]); err != nil {
-		if isQUICDatagramTooLarge(err) {
-			log.Printf("[QUIC-UDP] Packet exceeds DATAGRAM limit, using QUIC stream")
-			routeUDPViaQUICStream(gvisorConn, cfg, destAddr, firstBuf[:firstN])
-			return true
-		}
 		if !IsAutoFallbackEnabled() {
 			log.Printf("[QUIC-UDP] Send failed, automatic fallback disabled: %v", err)
 			return true
@@ -654,6 +652,8 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 		return true
 	}
 
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
 	var wg sync.WaitGroup
 	var closeOnce sync.Once
 	done := make(chan struct{})
@@ -674,13 +674,13 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 			_ = gvisorConn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			n, rErr := gvisorConn.Read(buf)
 			if rErr != nil {
+				if timeout, ok := rErr.(net.Error); ok && timeout.Timeout() && time.Since(time.Unix(0, lastActivity.Load())) < 60*time.Second {
+					continue
+				}
 				return
 			}
+			lastActivity.Store(time.Now().UnixNano())
 			if sErr := sendDgram(buf[:n]); sErr != nil {
-				if isQUICDatagramTooLarge(sErr) {
-					log.Printf("[QUIC-UDP] Flow packet exceeds DATAGRAM limit; closing instead of silently discarding every retry")
-					return
-				}
 				if conn.Context().Err() != nil {
 					return
 				}
@@ -698,16 +698,24 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 			select {
 			case <-done:
 				return
+			case <-conn.Context().Done():
+				return
+			case <-cfg.context().Done():
+				return
 			case resp, ok := <-respChan:
 				if !ok {
 					return
 				}
+				lastActivity.Store(time.Now().UnixNano())
 				_ = gvisorConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				written, wErr := gvisorConn.Write(resp)
 				if wErr != nil || written != len(resp) {
 					return
 				}
 			case <-time.After(60 * time.Second):
+				if time.Since(time.Unix(0, lastActivity.Load())) < 60*time.Second {
+					continue
+				}
 				return
 			}
 		}

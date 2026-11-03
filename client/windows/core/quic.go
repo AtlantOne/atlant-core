@@ -343,17 +343,23 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 
 func runQUICDatagramDispatcher(conn quicpeer.ClientConn) {
 	ctx := conn.Context()
+	var assembler wire.DatagramAssembler
 	for {
 		dgram, err := conn.ReceiveDatagram(ctx)
 		if err != nil {
 			break
 		}
 		// Server -> Client: [4B flowID][2B destLen][destAddr][payload]
+		var complete bool
+		dgram, complete = assembler.Decode(dgram, 4, time.Now())
+		if !complete {
+			continue
+		}
 		if len(dgram) < 6 {
 			continue
 		}
 		flowID := binary.BigEndian.Uint32(dgram[:4])
-		destLen := int(binary.BigEndian.Uint16(dgram[4:6]))
+		destLen := int(binary.BigEndian.Uint16(dgram[4:6]) & wire.DatagramDestinationMask)
 		if len(dgram) < 6+destLen {
 			continue
 		}
@@ -458,7 +464,7 @@ func startUDPRecoveryProbe(cfg *Config) {
 
 func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr string) bool {
 	_ = gvisorConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	firstBuf := make([]byte, 1500)
+	firstBuf := make([]byte, 65536)
 	firstN, err := gvisorConn.Read(firstBuf)
 	if err != nil {
 		return true
@@ -469,7 +475,7 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 	if err != nil {
 		log.Printf("[QUIC-UDP] Server connection failed: %v, falling back to TCP Reality", err)
 		routeUDPViaTCP(gvisorConn, cfg, destAddr, firstBuf[:firstN])
-		return false
+		return true
 	}
 
 	respChan := make(chan []byte, 2048)
@@ -487,19 +493,21 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 		pkt := make([]byte, 4+4+2+len(destBytes)+len(payload))
 		copy(pkt[:4], userTag[:])
 		binary.BigEndian.PutUint32(pkt[4:8], flowID)
-		binary.BigEndian.PutUint16(pkt[8:10], uint16(len(destBytes)))
+		binary.BigEndian.PutUint16(pkt[8:10], uint16(len(destBytes))|wire.DatagramFragmentsSupported)
 		copy(pkt[10:10+len(destBytes)], destBytes)
 		copy(pkt[10+len(destBytes):], payload)
 		if dgramPacer != nil {
 			dgramPacer.Pace(len(pkt))
 		}
-		return conn.SendDatagram(pkt)
+		return wire.SendTunnelDatagram(pkt, 8, conn.SendDatagram)
 	}
 
 	if err := sendDgram(firstBuf[:firstN]); err != nil {
 		routeUDPViaTCP(gvisorConn, cfg, destAddr, firstBuf[:firstN])
-		return false
+		return true
 	}
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
 	var wg sync.WaitGroup
 	var closeOnce sync.Once
 	done := make(chan struct{})
@@ -515,13 +523,17 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 	go func() {
 		defer wg.Done()
 		defer closeBoth()
-		buf := make([]byte, 1500)
+		buf := make([]byte, 65536)
 		for {
 			_ = gvisorConn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			n, rErr := gvisorConn.Read(buf)
 			if rErr != nil {
+				if timeout, ok := rErr.(net.Error); ok && timeout.Timeout() && time.Since(time.Unix(0, lastActivity.Load())) < 60*time.Second {
+					continue
+				}
 				return
 			}
+			lastActivity.Store(time.Now().UnixNano())
 			if sErr := sendDgram(buf[:n]); sErr != nil {
 				if conn.Context().Err() != nil {
 					return
@@ -540,10 +552,13 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 			select {
 			case <-done:
 				return
+			case <-conn.Context().Done():
+				return
 			case resp, ok := <-respChan:
 				if !ok {
 					return
 				}
+				lastActivity.Store(time.Now().UnixNano())
 				if strings.HasSuffix(destAddr, ":53") {
 					learnDNSResponse(resp)
 				}
@@ -551,6 +566,9 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 					return
 				}
 			case <-time.After(60 * time.Second):
+				if time.Since(time.Unix(0, lastActivity.Load())) < 60*time.Second {
+					continue
+				}
 				return
 			}
 		}

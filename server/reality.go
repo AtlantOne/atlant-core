@@ -1393,6 +1393,12 @@ func safeDialTCPContext(parent context.Context, target string, timeout time.Dura
 
 // safeResolveUDP resolves host, validates against SSRF, and returns a verified *net.UDPAddr.
 func safeResolveUDP(target string) (*net.UDPAddr, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return safeResolveUDPContext(ctx, target)
+}
+
+func safeResolveUDPContext(ctx context.Context, target string) (*net.UDPAddr, error) {
 	host, portStr, err := net.SplitHostPort(target)
 	if err != nil {
 		return nil, fmt.Errorf("invalid UDP target %s: %w", target, err)
@@ -1408,7 +1414,7 @@ func safeResolveUDP(target string) (*net.UDPAddr, error) {
 		}
 		return &net.UDPAddr{IP: ip, Port: port}, nil
 	}
-	ips, err := net.LookupIP(host)
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil || len(ips) == 0 {
 		return nil, fmt.Errorf("DNS resolution failed for %s: %w", host, err)
 	}

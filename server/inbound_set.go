@@ -53,14 +53,22 @@ type inboundBinding struct {
 }
 
 type inboundSet struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	revision  int64
-	bindings  []inboundBinding
-	workers   sync.WaitGroup
-	errors    chan error
-	closeOnce sync.Once
-	stopClose func() bool
+	ctx              context.Context
+	cancel           context.CancelFunc
+	revision         int64
+	metadataRevision atomic.Int64
+	bindings         []inboundBinding
+	workers          sync.WaitGroup
+	errors           chan error
+	closeOnce        sync.Once
+	stopClose        func() bool
+}
+
+func (s *inboundSet) appliedRevision() int64 {
+	if revision := s.metadataRevision.Load(); revision != 0 {
+		return revision
+	}
+	return s.revision
 }
 
 func prepareNativeInboundCatalog(ctx context.Context, config *Config) (*inboundCatalog, error) {

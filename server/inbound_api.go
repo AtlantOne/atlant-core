@@ -39,7 +39,7 @@ func handleAPIInbounds(w http.ResponseWriter, r *http.Request) {
 	running := false
 	active := []string{}
 	if runtime := activeInboundSet.Load(); runtime != nil {
-		applied = runtime.revision
+		applied = runtime.appliedRevision()
 		running = runtime.ctx.Err() == nil
 		if running {
 			for _, binding := range runtime.bindings {

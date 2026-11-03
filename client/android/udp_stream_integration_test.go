@@ -25,11 +25,15 @@ import (
 
 func TestQUICUDPStreamKeepsVideoPacketsWithoutTCPFallback(t *testing.T) {
 	for _, target := range []string{"video.example:443", "video.example:4443"} {
-		t.Run(target, func(t *testing.T) { testVideoUDPStream(t, target) })
+		t.Run(target, func(t *testing.T) { testVideoUDPStream(t, target, false) })
 	}
 }
 
-func testVideoUDPStream(t *testing.T, target string) {
+func TestQUICDatagramsKeepGrowingGamePackets(t *testing.T) {
+	testVideoUDPStream(t, "game.example:22023", true)
+}
+
+func testVideoUDPStream(t *testing.T, target string, datagrams bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	key := bytes.Repeat([]byte{7}, 32)
@@ -62,31 +66,59 @@ func testVideoUDPStream(t *testing.T, target string) {
 			serverDone <- fmt.Errorf("peer authentication: %v", err)
 			return
 		}
-		stream, err := conn.AcceptStream(ctx)
-		if err != nil {
-			serverDone <- err
-			return
-		}
-		_ = stream.SetDeadline(time.Now().Add(8 * time.Second))
-		header, err := wire.ReadQUICHeader(stream)
-		if err != nil || header.Protocol != 0x12 || header.Destination != target {
-			serverDone <- fmt.Errorf("UDP header: %+v %v", header, err)
-			return
-		}
-		buffer := make([]byte, 2+65535)
-		for i := 0; i < 16; i++ {
-			if _, err = io.ReadFull(stream, buffer[:2]); err != nil {
+		if datagrams {
+			var assembler wire.DatagramAssembler
+			for i := 0; i < 16; i++ {
+				var packet []byte
+				for {
+					raw, err := conn.ReceiveDatagram(ctx)
+					if err != nil {
+						serverDone <- err
+						return
+					}
+					var complete bool
+					packet, complete = assembler.Decode(raw, 8, time.Now())
+					if complete {
+						break
+					}
+				}
+				if len(packet) < 10+len(target) {
+					serverDone <- fmt.Errorf("invalid client datagram")
+					return
+				}
+				reply := append([]byte(nil), packet[4:]...)
+				if err := wire.SendTunnelDatagram(reply, 4, conn.SendDatagram); err != nil {
+					serverDone <- err
+					return
+				}
+			}
+		} else {
+			stream, err := conn.AcceptStream(ctx)
+			if err != nil {
 				serverDone <- err
 				return
 			}
-			n := int(binary.BigEndian.Uint16(buffer[:2]))
-			if _, err = io.ReadFull(stream, buffer[2:2+n]); err != nil {
-				serverDone <- err
+			_ = stream.SetDeadline(time.Now().Add(8 * time.Second))
+			header, err := wire.ReadQUICHeader(stream)
+			if err != nil || header.Protocol != 0x12 || header.Destination != target {
+				serverDone <- fmt.Errorf("UDP header: %+v %v", header, err)
 				return
 			}
-			if err = wire.WriteFull(stream, buffer[:2+n]); err != nil {
-				serverDone <- err
-				return
+			buffer := make([]byte, 2+65535)
+			for i := 0; i < 16; i++ {
+				if _, err = io.ReadFull(stream, buffer[:2]); err != nil {
+					serverDone <- err
+					return
+				}
+				n := int(binary.BigEndian.Uint16(buffer[:2]))
+				if _, err = io.ReadFull(stream, buffer[2:2+n]); err != nil {
+					serverDone <- err
+					return
+				}
+				if err = wire.WriteFull(stream, buffer[:2+n]); err != nil {
+					serverDone <- err
+					return
+				}
 			}
 		}
 		serverDone <- nil
@@ -108,13 +140,17 @@ func testVideoUDPStream(t *testing.T, target string) {
 	_ = app.SetDeadline(time.Now().Add(8 * time.Second))
 	cfg := &Config{runCtx: ctx, ServerAddr: listener.Addr().String(), SNI: "localhost", PBK: hex.EncodeToString(key), User: "alice", UDPProto: "quic", UDPMode: "quic", PaddingEnabled: true, MinPadding: 32, MaxPadding: 256}
 	relayDone := make(chan struct{})
-	go func() { defer close(relayDone); handleUDPViaDatagramTunnel(packet, cfg, target) }()
+	go func() {
+		defer close(relayDone)
+		if datagrams {
+			handleUDPViaDatagramTunnel(packet, cfg, target)
+		} else {
+			routeUDPViaQUICStream(packet, cfg, target, nil)
+		}
+	}()
 	var total int
 	for i := 0; i < 16; i++ {
-		size := []int{1200, 1350, 8192, 65507}[i%4]
-		if i == 0 && !preferQUICUDPStream(target) {
-			size = 8192
-		} // first DATAGRAM cannot fit; stay on QUIC
+		size := []int{32, 1350, 8192, 65507}[i%4]
 		payload := bytes.Repeat([]byte{byte(i + 1)}, size)
 		if err := wire.WriteFull(app, payload); err != nil {
 			t.Fatalf("send packet %d: %v", i, err)

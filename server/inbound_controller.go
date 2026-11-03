@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 )
@@ -30,7 +31,7 @@ func startInboundController(parent context.Context, catalog inboundCatalog) (*in
 		cancel()
 		return nil, err
 	}
-	c := &inboundController{ctx: ctx, cancel: cancel, applied: catalog}
+	c := &inboundController{ctx: ctx, cancel: cancel, applied: cloneInboundCatalog(catalog)}
 	c.install(running)
 	return c, nil
 }
@@ -58,6 +59,7 @@ func (c *inboundController) install(running *inboundSet) {
 func (c *inboundController) Apply(candidate inboundCatalog) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	candidate = cloneInboundCatalog(candidate)
 	if c.ctx.Err() != nil || c.current == nil {
 		return false, errors.New("inbound controller is stopped")
 	}
@@ -75,6 +77,16 @@ func (c *inboundController) Apply(candidate inboundCatalog) (bool, error) {
 		return false, err
 	}
 	if candidate.Revision == c.applied.Revision {
+		return false, nil
+	}
+	if sameInboundListeners(c.applied, candidate) {
+		if c.persist != nil {
+			if err := c.persist(candidate); err != nil {
+				return false, fmt.Errorf("persist inbound profile metadata: %w", err)
+			}
+		}
+		c.applied = candidate
+		c.current.metadataRevision.Store(candidate.Revision)
 		return false, nil
 	}
 	previous, old := c.applied, c.current
@@ -101,6 +113,43 @@ func (c *inboundController) Apply(candidate inboundCatalog) (bool, error) {
 	}
 	c.install(restored)
 	return true, fmt.Errorf("inbound apply failed; previous runtime restored: %w", err)
+}
+
+func cloneInboundCatalog(catalog inboundCatalog) inboundCatalog {
+	catalog.Inbounds = append([]inboundRecord(nil), catalog.Inbounds...)
+	for i := range catalog.Inbounds {
+		catalog.Inbounds[i].Settings.Transports = append([]string(nil), catalog.Inbounds[i].Settings.Transports...)
+	}
+	return catalog
+}
+
+// Names and advertised addresses belong to subscription profiles. Updating
+// those fields must not close sockets or interrupt existing VPN sessions.
+func sameInboundListeners(previous, next inboundCatalog) bool {
+	records := make(map[string]inboundRecord, len(previous.Inbounds))
+	for _, record := range previous.Inbounds {
+		if record.Settings.Enabled {
+			records[record.Settings.ID] = record
+		}
+	}
+	count := 0
+	for _, record := range next.Inbounds {
+		if !record.Settings.Enabled {
+			continue
+		}
+		count++
+		old, ok := records[record.Settings.ID]
+		if !ok || old.PublicKey != record.PublicKey {
+			return false
+		}
+		a, b := old.Settings, record.Settings
+		a.Name, b.Name = "", ""
+		a.AdvertiseAddr, b.AdvertiseAddr = "", ""
+		if !reflect.DeepEqual(a, b) {
+			return false
+		}
+	}
+	return count == len(records)
 }
 
 func (c *inboundController) Wait() error {

@@ -316,7 +316,57 @@ func testSecureQUICServer(t *testing.T, version quic.Version, format int, wrongP
 	if os.Getenv("ATLANT_TEST_UDP_TARGET") == "192.0.2.1" {
 		testProductionUDPStream(t, ctx, conn)
 		testProductionDNSPolicy(t, ctx, conn)
+		testProductionLargeDatagrams(t, ctx, conn)
 	}
+}
+
+func testProductionLargeDatagrams(t *testing.T, ctx context.Context, conn quicpeer.ClientConn) {
+	t.Helper()
+	echo, err := net.ListenPacket("udp", "192.0.2.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		buffer := make([]byte, 65536)
+		for {
+			n, peer, err := echo.ReadFrom(buffer)
+			if err != nil {
+				return
+			}
+			echo.WriteTo(buffer[:n], peer)
+		}
+	}()
+	target := echo.LocalAddr().String()
+	var assembler wire.DatagramAssembler
+	for _, size := range []int{32, 1300, 8192, 65507} {
+		payload := bytes.Repeat([]byte{byte(size)}, size)
+		packet := make([]byte, 10+len(target)+len(payload))
+		tag := getUserTag("alice")
+		copy(packet, tag[:])
+		binary.BigEndian.PutUint32(packet[4:], 999)
+		binary.BigEndian.PutUint16(packet[8:], uint16(len(target))|wire.DatagramFragmentsSupported)
+		copy(packet[10:], target)
+		copy(packet[10+len(target):], payload)
+		if err := wire.SendTunnelDatagram(packet, 8, conn.SendDatagram); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			raw, err := conn.ReceiveDatagram(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reply, complete := assembler.Decode(raw, 4, time.Now())
+			if !complete {
+				continue
+			}
+			if len(reply) < 6+len(target) || !bytes.Equal(reply[6+len(target):], payload) {
+				t.Fatalf("Production datagram size %d corrupted", size)
+			}
+			break
+		}
+	}
+	t.Log("Production QUIC authentication and UDP relay preserved growing packets through 65507 bytes")
 }
 
 // Admission now reserves a real peer IP. net.Pipe reports the synthetic
