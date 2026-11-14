@@ -756,6 +756,16 @@ func udpTCPConfig(cfg *Config, destAddr string) *Config {
 }
 
 func dialUDPOverTCP(cfg *Config, destAddr string) (net.Conn, error) {
+	if GetTCPProto() == "xhttp" {
+		stream, err := dialXHTTPStream(cfg, "udp", destAddr)
+		if err == nil {
+			return stream, nil
+		}
+		if cfg.context().Err() != nil || !IsAutoFallbackEnabled() {
+			return nil, err
+		}
+		log.Printf("[UDP-XHTTP] Setup failed for %s, trying TCP/REALITY: %v", destAddr, err)
+	}
 	return dialRealityTransport(udpTCPConfig(cfg, destAddr), "udp", destAddr)
 }
 
@@ -769,6 +779,6 @@ func routeUDPViaTCP(packetConn net.Conn, cfg *Config, destAddr string, initial [
 		_ = tcpConn.SetNoDelay(true)
 	}
 	if err := wire.RelayUDPStream(packetConn, stream, initial, udpStreamOptions(cfg, destAddr)); err != nil && cfg.context().Err() == nil {
-		log.Printf("[UDP-TCP] Session ended: %v", err)
+		log.Printf("[UDP-TCP] Session to %s ended: %v", destAddr, err)
 	}
 }

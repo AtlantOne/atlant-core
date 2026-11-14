@@ -549,7 +549,9 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 
 		// UDP over XHTTP stream
 		if proto == "udp" {
-			udpAddr, err := safeResolveUDP(dest)
+			resolveCtx, cancelResolve := context.WithTimeout(r.Context(), 3*time.Second)
+			udpAddr, err := safeResolveUDPContext(resolveCtx, dest)
+			cancelResolve()
 			if err != nil {
 				log.Printf("[XHTTP-UDP] Resolve failed for %s: %v", dest, err)
 				http.Error(w, "UDP resolve failed: "+err.Error(), http.StatusForbidden)
@@ -601,22 +603,24 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 				defer wg.Done()
 				defer once.Do(closeBoth)
 				lenBuf := make([]byte, 2)
+				packet := make([]byte, 65507)
 				for {
 					if _, err := io.ReadFull(r.Body, lenBuf); err != nil {
 						return
 					}
 					pktLen := binary.BigEndian.Uint16(lenBuf)
-					if pktLen == 0 || pktLen > 65507 {
+					if int(pktLen) > len(packet) {
 						return
 					}
-					pkt := make([]byte, pktLen)
+					pkt := packet[:pktLen]
 					if _, err := io.ReadFull(r.Body, pkt); err != nil {
 						return
 					}
 					if !recordUserTraffic(user, uint64(pktLen), 0) {
 						return
 					}
-					if _, err := uConn.Write(pkt); err != nil {
+					_ = uConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+					if n, err := uConn.Write(pkt); err != nil || n != len(pkt) {
 						return
 					}
 				}
@@ -628,19 +632,21 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 				defer once.Do(closeBoth)
 				buf := make([]byte, 65536)
 				for {
-					_ = uConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+					_ = uConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 					n, err := uConn.Read(buf[2:])
-					if n > 0 {
+					if n > 0 || err == nil {
 						response := dnsUDPResponse(dest, buf[2:2+n])
 						n = copy(buf[2:], response)
 						if !recordUserTraffic(user, 0, uint64(n)) {
 							return
 						}
 						binary.BigEndian.PutUint16(buf[:2], uint16(n))
-						if _, wErr := w.Write(buf[:2+n]); wErr != nil {
+						if wErr := writeFull(w, buf[:2+n]); wErr != nil {
 							return
 						}
-						flusher.Flush()
+						if err := controller.Flush(); err != nil {
+							return
+						}
 					}
 					if err != nil {
 						return
@@ -709,13 +715,12 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 					}
 				}
 				if rErr != nil {
-					// Proper TCP Half-Close: client finished sending request.
-					// Send TCP FIN to target without closing Downlink!
-					if tcpConn, ok := targetConn.(interface{ CloseWrite() error }); ok {
-						_ = tcpConn.CloseWrite()
-					} else {
-						once.Do(closeBoth)
+					if rErr == io.EOF {
+						if tcpConn, ok := targetConn.(interface{ CloseWrite() error }); ok && tcpConn.CloseWrite() == nil {
+							return
+						}
 					}
+					once.Do(closeBoth)
 					return
 				}
 			}
@@ -725,7 +730,6 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 		go func() {
 			defer wg.Done()
 			defer once.Do(closeBoth)
-			fw := &flushWriter{w: w, f: flusher}
 			buf := make([]byte, 32768)
 			for {
 				n, rErr := targetConn.Read(buf)
@@ -733,7 +737,10 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 					if !recordUserTraffic(user, 0, uint64(n)) {
 						return
 					}
-					if _, wErr := fw.Write(buf[:n]); wErr != nil {
+					if wErr := writeFull(w, buf[:n]); wErr != nil {
+						return
+					}
+					if err := controller.Flush(); err != nil {
 						return
 					}
 				}
@@ -751,19 +758,6 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 	h2Server.ServeConn(tlsConn, &http2.ServeConnOpts{
 		Handler: handler,
 	})
-}
-
-type flushWriter struct {
-	w io.Writer
-	f http.Flusher
-}
-
-func (fw *flushWriter) Write(p []byte) (int, error) {
-	n, err := fw.w.Write(p)
-	if n > 0 && fw.f != nil {
-		fw.f.Flush()
-	}
-	return n, err
 }
 
 func writeHTTPRedirect(conn net.Conn, sni string) {

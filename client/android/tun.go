@@ -6,6 +6,7 @@ package atlant
 import (
 	"atlant.local/protocol/routepeek"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -354,7 +355,7 @@ func handleTCP(r *tcp.ForwarderRequest, cfg *Config) {
 	defer remoteConn.Close()
 
 	if len(initialData) > 0 {
-		if _, wErr := remoteConn.Write(initialData); wErr != nil {
+		if wErr := writeFull(remoteConn, initialData); wErr != nil {
 			log.Printf("[TCP] Failed to forward initial packet to %s: %v", destAddr, wErr)
 			return
 		}
@@ -373,8 +374,11 @@ func handleTCP(r *tcp.ForwarderRequest, cfg *Config) {
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 64*1024)
-		_, err := io.CopyBuffer(remoteConn, clientConn, buf)
+		n, err := io.CopyBuffer(remoteConn, clientConn, buf)
 		if err != nil {
+			if cfg.context().Err() == nil && !errors.Is(err, net.ErrClosed) {
+				log.Printf("[TCP] Upload to %s ended after %d bytes: %v", destAddr, n, err)
+			}
 			closeOnce.Do(closeBoth)
 			return
 		}
@@ -389,7 +393,10 @@ func handleTCP(r *tcp.ForwarderRequest, cfg *Config) {
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 64*1024)
-		_, _ = io.CopyBuffer(clientConn, remoteConn, buf)
+		n, err := io.CopyBuffer(clientConn, remoteConn, buf)
+		if err != nil && cfg.context().Err() == nil && !errors.Is(err, net.ErrClosed) {
+			log.Printf("[TCP] Download from %s ended after %d bytes: %v", destAddr, n, err)
+		}
 		// Server finished transmitting response (or connection reset)
 		closeOnce.Do(closeBoth)
 	}()
@@ -422,6 +429,7 @@ func handleUDPConn(gConn net.Conn, cfg *Config, destAddr string) {
 			buf := make([]byte, 2048)
 			_ = gConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 			n, err := gConn.Read(buf)
+			_ = gConn.SetReadDeadline(time.Time{})
 			if err == nil && n > 0 {
 				if resp, ok := getFakeDNS().handleDNSQuery(buf[:n]); ok {
 					_ = gConn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
