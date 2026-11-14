@@ -80,7 +80,7 @@ func parseConfig() *Config {
 		PaddingEnabled:   true,
 		MinPadding:       32,
 		MaxPadding:       256,
-		ChaffingEnabled:  true,
+		ChaffingEnabled:  false,
 		ChaffingInterval: 10,
 		ChaffingMinBytes: 16,
 		ChaffingMaxBytes: 64,
@@ -106,7 +106,7 @@ func parseConfig() *Config {
 	paddingFlag := flag.Bool("padding", true, "Enable dynamic packet length padding")
 	minPaddingFlag := flag.Int("min-padding", 0, "Minimum padding bytes")
 	maxPaddingFlag := flag.Int("max-padding", 0, "Maximum padding bytes")
-	chaffingFlag := flag.Bool("chaffing", true, "Enable background chaffing micro-noise")
+	chaffingFlag := flag.Bool("chaffing", false, "Enable background chaffing micro-noise")
 	chaffingIntervalFlag := flag.Int("chaffing-interval", 0, "Chaffing interval in seconds")
 	muxFlag := flag.Bool("mux", false, "Enable Yamux stream multiplexing (default false = direct 1-to-1)")
 	upFlag := flag.Uint64("up-mbps", 0, "Aggregate upload limit in Mbps (0 = unlimited)")
@@ -277,7 +277,7 @@ func loadConfigFromFile(filename string) *Config {
 		PaddingEnabled:   true,
 		MinPadding:       32,
 		MaxPadding:       256,
-		ChaffingEnabled:  true,
+		ChaffingEnabled:  false,
 		ChaffingInterval: 10,
 		ChaffingMinBytes: 16,
 		ChaffingMaxBytes: 64,
@@ -319,7 +319,7 @@ func parseAtlantURL(link string) *Config {
 		PaddingEnabled:   true,
 		MinPadding:       32,
 		MaxPadding:       256,
-		ChaffingEnabled:  true,
+		ChaffingEnabled:  false,
 		ChaffingInterval: 10,
 		ChaffingMinBytes: 16,
 		ChaffingMaxBytes: 64,
@@ -359,8 +359,8 @@ func parseAtlantURL(link string) *Config {
 	if pad := q.Get("padding"); pad == "false" || pad == "0" {
 		cfg.PaddingEnabled = false
 	}
-	if chaff := q.Get("chaffing"); chaff == "false" || chaff == "0" {
-		cfg.ChaffingEnabled = false
+	if chaff := q.Get("chaffing"); chaff == "true" || chaff == "1" {
+		cfg.ChaffingEnabled = true
 	}
 	if mux := q.Get("mux"); mux == "true" || mux == "1" {
 		cfg.Mux = true

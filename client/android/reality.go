@@ -33,7 +33,7 @@ import (
 )
 
 func startChaffingWorker(ctx context.Context, cfg *Config) {
-	if !cfg.ChaffingEnabled {
+	if !cfg.ChaffingEnabled || !cfg.Mux {
 		return
 	}
 	interval := cfg.ChaffingInterval
@@ -49,17 +49,21 @@ func startChaffingWorker(ctx context.Context, cfg *Config) {
 		case <-time.After(time.Duration(jitterMs) * time.Millisecond):
 		}
 
-		if !cfg.ChaffingEnabled {
-			continue
+		// Background traffic must never create a connection of its own.
+		if ctx.Err() != nil || !IsChaffingEnabled() {
+			return
 		}
-		go func() {
-			conn, err := dialRealityConn(cfg)
-			if err != nil {
-				return
+		sessMu.Lock()
+		current := session
+		sessMu.Unlock()
+		if current != nil && !current.IsClosed() && current.NumStreams() > 0 {
+			stream, err := current.Open()
+			if err == nil {
+				_ = stream.SetWriteDeadline(time.Now().Add(2 * time.Second))
+				_ = writeAtlantHeader(stream, "chaffing", "127.0.0.1:0")
+				_ = stream.Close()
 			}
-			defer conn.Close()
-			_ = writeAtlantHeader(conn, "chaffing", "127.0.0.1:0")
-		}()
+		}
 	}
 }
 

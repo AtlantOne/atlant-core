@@ -99,7 +99,7 @@ func parseConfig() *Config {
 		PaddingEnabled:   true,
 		MinPadding:       32,
 		MaxPadding:       256,
-		ChaffingEnabled:  true,
+		ChaffingEnabled:  false,
 		ChaffingInterval: 10,
 		ChaffingMinBytes: 16,
 		ChaffingMaxBytes: 64,
@@ -166,7 +166,7 @@ func parseConfig() *Config {
 	paddingEnabledFlag := flag.Bool("padding", true, "Enable random frame padding")
 	minPaddingFlag := flag.Int("min-padding", 0, "Minimum padding bytes")
 	maxPaddingFlag := flag.Int("max-padding", 0, "Maximum padding bytes")
-	chaffingEnabledFlag := flag.Bool("chaffing", true, "Enable background chaffing micro-noise")
+	chaffingEnabledFlag := flag.Bool("chaffing", false, "Enable background chaffing micro-noise")
 	chaffingIntervalFlag := flag.Int("chaffing-interval", 0, "Chaffing interval in seconds")
 	chaffingMinBytesFlag := flag.Int("chaffing-min-bytes", 0, "Minimum chaffing bytes")
 	chaffingMaxBytesFlag := flag.Int("chaffing-max-bytes", 0, "Maximum chaffing bytes")
@@ -571,7 +571,7 @@ func loadConfigFromFile(filename string) *Config {
 	if cfg.MaxPadding > 0 {
 		maxPadding = cfg.MaxPadding
 	}
-	chaffingEnabled := true
+	chaffingEnabled := false
 	if cfg.ChaffingEnabled != nil {
 		chaffingEnabled = *cfg.ChaffingEnabled
 	}

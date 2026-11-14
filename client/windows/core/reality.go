@@ -635,7 +635,7 @@ func startChaffingWorker(cfg *Config) {
 		baseInterval, cfg.ChaffingMinBytes, cfg.ChaffingMaxBytes)
 
 	for {
-		// Randomized jitter between 0.7x and 1.6x of baseInterval (e.g. 17s - 40s) to defeat ML/SPLT periodicity detection
+		// Spread optional background work across timer ticks.
 		jitterMs := baseInterval*700 + int(time.Now().UnixNano()%int64(baseInterval*900+1))
 		time.Sleep(time.Duration(jitterMs) * time.Millisecond)
 
@@ -643,15 +643,13 @@ func startChaffingWorker(cfg *Config) {
 		sess := session
 		mu.Unlock()
 
-		if sess != nil && !sess.IsClosed() {
-			go func(s *yamux.Session) {
-				stream, err := s.Open()
-				if err != nil {
-					return
-				}
-				defer stream.Close()
+		if sess != nil && !sess.IsClosed() && sess.NumStreams() > 0 {
+			stream, err := sess.Open()
+			if err == nil {
+				_ = stream.SetWriteDeadline(time.Now().Add(2 * time.Second))
 				_ = writeAtlantHeader(stream, "chaffing", "127.0.0.1:0")
-			}(sess)
+				_ = stream.Close()
+			}
 		}
 	}
 }

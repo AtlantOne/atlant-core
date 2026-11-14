@@ -140,7 +140,7 @@ var (
 	optFingerprint      string = "firefox"
 	optMinPadding       int    = 32
 	optMaxPadding       int    = 256
-	optChaffingEnabled  bool   = true
+	optChaffingEnabled  bool   = false
 	optChaffingInterval int    = 10
 	optMux              bool   = false
 	optWireVersion      int    = 6
