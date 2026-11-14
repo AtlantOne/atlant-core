@@ -122,7 +122,12 @@ func writeAtlantHeader(conn net.Conn, network, addr string) error {
 
 // dialRemoteRealityStream opens a connection to the remote destination over Reality TLS 1.3.
 // Supports direct TCP streams and optional yamux multiplexing.
-func dialRemoteRealityStream(cfg *Config, network, addr string) (net.Conn, error) {
+func dialRemoteRealityStream(cfg *Config, network, addr string) (result net.Conn, err error) {
+	defer func() {
+		if err == nil && result != nil {
+			result = paceClientConn(result, cfg, network == "udp", false)
+		}
+	}()
 	if cfg.Mux {
 		stream, err := dialRemote(cfg)
 		if err != nil {
@@ -515,36 +520,7 @@ func buildClientHelloWithUTLS(serverName string, sessionID []byte, clientEphPub 
 	if len(sessionID) != 32 || len(clientEphPub) != 32 {
 		return nil, fmt.Errorf("invalid REALITY ClientHello authentication fields")
 	}
-	var helloID u.ClientHelloID
-	switch strings.ToLower(strings.TrimSpace(fingerprint)) {
-	case "", "firefox", "firefox_120", "firefox_auto":
-		helloID = u.HelloFirefox_120
-	case "safari", "safari_16", "safari_auto":
-		helloID = u.HelloSafari_16_0
-	case "ios", "ios_14", "ios_13", "iphone":
-		helloID = u.HelloIOS_14
-	case "edge", "edge_106", "edge_85":
-		helloID = u.HelloEdge_106
-	case "android", "okhttp", "android_11":
-		helloID = u.HelloAndroid_11_OkHttp
-	case "360":
-		helloID = u.Hello360_Auto
-	case "qq":
-		helloID = u.HelloQQ_Auto
-	case "randomized", "random":
-		helloID = u.HelloRandomized
-	case "chrome_120":
-		helloID = u.HelloChrome_120
-	case "chrome", "chrome_auto", "chrome_144", "chrome_133":
-		helloID = u.HelloChrome_133
-	default:
-		return nil, fmt.Errorf("unsupported TLS profile %q", fingerprint)
-	}
-
-	spec, err := u.UTLSIdToSpec(helloID)
-	if helloID == u.HelloChrome_133 {
-		spec, err = tlsprofiles.Chrome144Spec()
-	}
+	spec, err := tlsprofiles.Spec(fingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("utls spec failed: %w", err)
 	}
@@ -775,10 +751,7 @@ func (c *realitySecureConn) Write(p []byte) (int, error) {
 	const maxPlaintext = 16384
 	total := 0
 	pending, records := 0, 0
-	batchLimit := 1
-	if c.xhttpBatch {
-		batchLimit = 4
-	}
+	batchLimit := 4 // Batch only bytes already supplied by this Write; never wait.
 	c.recordBuf.ResetBatch()
 	for len(p) > 0 {
 		chunkSize := len(p)
@@ -971,7 +944,9 @@ func getSession(cfg *Config) (_ *yamux.Session, err error) {
 		sessionCond.Broadcast()
 	}()
 
+	mu.Unlock()
 	secureConn, err := dialRealityConn(cfg)
+	mu.Lock()
 	if err != nil {
 		return nil, err
 	}

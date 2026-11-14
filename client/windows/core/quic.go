@@ -102,6 +102,14 @@ func (q *quicNetStream) RemoteAddr() net.Addr {
 	return wire.StreamAddr(q.remoteAddr)
 }
 
+func (q *quicNetStream) CloseWrite() error { return q.ClientStream.Close() }
+
+func (q *quicNetStream) Close() error {
+	q.ClientStream.CancelRead(0)
+	q.ClientStream.CancelWrite(0)
+	return nil
+}
+
 func (q *quicNetStream) Write(b []byte) (int, error) {
 	if q.pacer != nil {
 		q.pacer.Pace(len(b))
@@ -301,7 +309,7 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 		}
 		direct = []quicpeer.DirectCredentials{{User: cfg.User, Key: userKey, ServerPublicKey: serverKey}}
 	}
-	conn, closer, err := quicpeer.DialClient(ctx, transport, serverUDPAddr, tlsConfig, quicConfig, cfg.WireVersion, direct...)
+	conn, closer, err := quicpeer.DialClientWithProfile(ctx, transport, serverUDPAddr, tlsConfig, quicConfig, cfg.WireVersion, cfg.QUICFingerprint, direct...)
 	if err != nil {
 		_ = closer.Close()
 		_ = pc.Close()
@@ -369,7 +377,7 @@ func runQUICDatagramDispatcher(conn quicpeer.ClientConn) {
 	}
 }
 
-func dialQUICStream(cfg *Config, network, addr string) (net.Conn, error) {
+func dialPrimaryQUICStream(cfg *Config, network, addr string) (net.Conn, error) {
 	conn, err := getOrDialQUICClient(cfg)
 	if err != nil {
 		return nil, err
@@ -396,16 +404,19 @@ func dialQUICStream(cfg *Config, network, addr string) (net.Conn, error) {
 	}
 	_ = stream.SetWriteDeadline(time.Time{})
 
-	var pacer *BrutalPacer
-	if cfg.UpMbps > 0 {
-		pacer = NewBrutalPacer(cfg.UpMbps)
-	}
 	return &quicNetStream{
 		ClientStream: stream,
-		pacer:        pacer,
 		localAddr:    conn.LocalAddr(),
 		remoteAddr:   conn.RemoteAddr(),
 	}, nil
+}
+
+func recoverUDPChannel(cfg *Config) error {
+	_, err := getOrDialQUICClient(cfg)
+	if err == nil {
+		setUDPBlocked(false)
+	}
+	return err
 }
 
 func startUDPRecoveryProbe(cfg *Config) {
@@ -429,25 +440,11 @@ func startUDPRecoveryProbe(cfg *Config) {
 			if !isUDPBlocked() {
 				return
 			}
-			// Принудительно сбрасываем старый коннект, чтобы проверить реальное прохождение QUIC Handshake
-			quicClientMu.Lock()
-			if quicClientConn != nil {
-				_ = quicClientConn.CloseWithError(0, "recovery probe")
-				quicClientConn = nil
-			}
-			if quicClientTransport != nil {
-				_ = quicClientTransport.Close()
-				quicClientTransport = nil
-			}
-			if quicClientPacket != nil {
-				_ = quicClientPacket.Close()
-				quicClientPacket = nil
-			}
-			quicClientMu.Unlock()
+			// A shared carrier may still serve active TCP streams. Recovery
+			// must reuse it; only getOrDialQUICClient replaces a closed carrier.
 
-			if _, err := getOrDialQUICClient(cfg); err == nil {
-				log.Printf("[UDP-RECOVERY] UDP handshake verified, switching back to QUIC UDP tunnel")
-				setUDPBlocked(false)
+			if err := recoverUDPChannel(cfg); err == nil {
+				log.Printf("[UDP-RECOVERY] UDP carrier available, switching back to QUIC UDP tunnel")
 				return
 			}
 		}
@@ -455,6 +452,8 @@ func startUDPRecoveryProbe(cfg *Config) {
 }
 
 func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr string) bool {
+	original := gvisorConn
+	gvisorConn = paceClientConn(gvisorConn, cfg, true, true)
 	_ = gvisorConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	firstBuf := make([]byte, 65536)
 	firstN, err := gvisorConn.Read(firstBuf)
@@ -466,7 +465,7 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 	conn, err := getOrDialQUICClient(cfg)
 	if err != nil {
 		log.Printf("[QUIC-UDP] Server connection failed: %v, falling back to TCP Reality", err)
-		routeUDPViaTCP(gvisorConn, cfg, destAddr, firstBuf[:firstN])
+		routeUDPViaTCP(original, cfg, destAddr, firstBuf[:firstN])
 		return true
 	}
 
@@ -476,10 +475,6 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 
 	userTag := getUserTag(cfg.User)
 	destBytes := []byte(destAddr)
-	var dgramPacer *BrutalPacer
-	if cfg.UpMbps > 0 {
-		dgramPacer = NewBrutalPacer(cfg.UpMbps)
-	}
 	sendDgram := func(payload []byte) error {
 		// [4B userTag][4B flowID][2B destLen][destAddr][payload]
 		pkt := make([]byte, 4+4+2+len(destBytes)+len(payload))
@@ -488,14 +483,11 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 		binary.BigEndian.PutUint16(pkt[8:10], uint16(len(destBytes))|wire.DatagramFragmentsSupported)
 		copy(pkt[10:10+len(destBytes)], destBytes)
 		copy(pkt[10+len(destBytes):], payload)
-		if dgramPacer != nil {
-			dgramPacer.Pace(len(pkt))
-		}
 		return wire.SendTunnelDatagram(pkt, 8, conn.SendDatagram)
 	}
 
 	if err := sendDgram(firstBuf[:firstN]); err != nil {
-		routeUDPViaTCP(gvisorConn, cfg, destAddr, firstBuf[:firstN])
+		routeUDPViaTCP(original, cfg, destAddr, firstBuf[:firstN])
 		return true
 	}
 	var lastActivity atomic.Int64

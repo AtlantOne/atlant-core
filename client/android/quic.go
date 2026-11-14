@@ -159,6 +159,7 @@ var (
 )
 
 func closeQUICClient(reason string) {
+	bulkQUICPool.Reset()
 	quicClientMu.Lock()
 	quicGeneration++
 	if quicDialCancel != nil {
@@ -408,7 +409,7 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 		}
 		direct = []quicpeer.DirectCredentials{{User: cfg.User, Key: userKey, ServerPublicKey: serverKey}}
 	}
-	conn, closer, err := quicpeer.DialClient(ctx, transport, serverUDPAddr, tlsConfig, quicConfig, cfg.WireVersion, direct...)
+	conn, closer, err := quicpeer.DialClientWithProfile(ctx, transport, serverUDPAddr, tlsConfig, quicConfig, cfg.WireVersion, cfg.QUICFingerprint, direct...)
 	if err != nil {
 		_ = closer.Close()
 		_ = pc.Close()
@@ -509,7 +510,7 @@ func runQUICDatagramDispatcher(conn quicpeer.ClientConn) {
 	}
 }
 
-func dialQUICStream(cfg *Config, network, addr string) (net.Conn, error) {
+func dialPrimaryQUICStream(cfg *Config, network, addr string) (net.Conn, error) {
 	conn, err := getOrDialQUICClient(cfg)
 	if err != nil {
 		return nil, err
@@ -608,8 +609,8 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 			return true
 		}
 		log.Printf("[QUIC-UDP] Dial error: %v, falling back to TCP Reality", err)
-		setUDPBlocked(true)
-		startUDPRecoveryProbe(cfg)
+		// The shared dial cooldown bounds retries. Failure of this flow is not
+		// evidence that every UDP destination needs a different transport.
 		routeUDPViaTCP(gvisorConn, cfg, destAddr, firstBuf[:firstN])
 		return true
 	}
@@ -638,8 +639,6 @@ func handleUDPViaDatagramTunnel(gvisorConn net.Conn, cfg *Config, destAddr strin
 			return true
 		}
 		log.Printf("[QUIC-UDP] SendDatagram error: %v, falling back to TCP Reality", err)
-		setUDPBlocked(true)
-		startUDPRecoveryProbe(cfg)
 		routeUDPViaTCP(gvisorConn, cfg, destAddr, firstBuf[:firstN])
 		return true
 	}

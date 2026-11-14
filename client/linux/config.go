@@ -11,45 +11,50 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 type Config struct {
-	ServerAddr       string   `json:"server"`
-	BackupServers    []string `json:"backup_servers"`
-	SNI              string   `json:"sni"`
-	PBK              string   `json:"pbk"`
-	User             string   `json:"user"`
-	LocalPort        string   `json:"local"`
-	Tun              bool     `json:"tun"`
-	TunName          string   `json:"tun_name"`
-	TunAddr          string   `json:"tun_addr"`
-	TunDNS           string   `json:"tun_dns"`
-	TunIPv6Addr      string   `json:"tun_ipv6_addr,omitempty"`
-	TunDNSIPv6       string   `json:"tun_dns_ipv6,omitempty"`
-	DisableIPv6      bool     `json:"disable_ipv6,omitempty"`
-	Transport        string   `json:"transport"`
-	Path             string   `json:"path"`
-	Mode             string   `json:"mode"`
-	ContentType      string   `json:"content_type"`
-	TrafficMode      string   `json:"traffic_mode"` // "split", "tcp", "udp"
-	UDPProto         string   `json:"udp_proto"`    // "quic", "tcp"
-	UDPMode          string   `json:"udp_mode"`
-	TCPProto         string   `json:"tcp_proto"` // "reality", "xhttp"
-	ServerPubKey     string   `json:"server_pub_key"`
-	WireVersion      int      `json:"wire_version,omitempty"`
-	MTU              int      `json:"mtu"`
-	Mux              bool     `json:"mux"`
-	LogLevel         string   `json:"log_level"`
-	FakeDNS          bool     `json:"fake_dns"`
-	TrafficPadding   bool     `json:"traffic_padding"`
-	Fingerprint      string   `json:"fingerprint"`
-	PaddingEnabled   bool     `json:"padding_enabled"`
-	MinPadding       int      `json:"min_padding"`
-	MaxPadding       int      `json:"max_padding"`
-	ChaffingEnabled  bool     `json:"chaffing_enabled"`
-	ChaffingInterval int      `json:"chaffing_interval"`
-	ChaffingMinBytes int      `json:"chaffing_min_bytes"`
-	ChaffingMaxBytes int      `json:"chaffing_max_bytes"`
+	UpMbps                  uint64   `json:"up_mbps,omitempty"`
+	DownMbps                uint64   `json:"down_mbps,omitempty"`
+	QUICParallelConnections int      `json:"quic_parallel_connections,omitempty"`
+	ServerAddr              string   `json:"server"`
+	BackupServers           []string `json:"backup_servers"`
+	SNI                     string   `json:"sni"`
+	PBK                     string   `json:"pbk"`
+	User                    string   `json:"user"`
+	LocalPort               string   `json:"local"`
+	Tun                     bool     `json:"tun"`
+	TunName                 string   `json:"tun_name"`
+	TunAddr                 string   `json:"tun_addr"`
+	TunDNS                  string   `json:"tun_dns"`
+	TunIPv6Addr             string   `json:"tun_ipv6_addr,omitempty"`
+	TunDNSIPv6              string   `json:"tun_dns_ipv6,omitempty"`
+	DisableIPv6             bool     `json:"disable_ipv6,omitempty"`
+	Transport               string   `json:"transport"`
+	Path                    string   `json:"path"`
+	Mode                    string   `json:"mode"`
+	ContentType             string   `json:"content_type"`
+	TrafficMode             string   `json:"traffic_mode"` // "split", "tcp", "udp"
+	UDPProto                string   `json:"udp_proto"`    // "quic", "tcp"
+	UDPMode                 string   `json:"udp_mode"`
+	TCPProto                string   `json:"tcp_proto"` // "reality", "xhttp"
+	ServerPubKey            string   `json:"server_pub_key"`
+	WireVersion             int      `json:"wire_version,omitempty"`
+	MTU                     int      `json:"mtu"`
+	Mux                     bool     `json:"mux"`
+	LogLevel                string   `json:"log_level"`
+	FakeDNS                 bool     `json:"fake_dns"`
+	TrafficPadding          bool     `json:"traffic_padding"`
+	Fingerprint             string   `json:"fingerprint"`
+	QUICFingerprint         string   `json:"quic_fingerprint,omitempty"`
+	PaddingEnabled          bool     `json:"padding_enabled"`
+	MinPadding              int      `json:"min_padding"`
+	MaxPadding              int      `json:"max_padding"`
+	ChaffingEnabled         bool     `json:"chaffing_enabled"`
+	ChaffingInterval        int      `json:"chaffing_interval"`
+	ChaffingMinBytes        int      `json:"chaffing_min_bytes"`
+	ChaffingMaxBytes        int      `json:"chaffing_max_bytes"`
 }
 
 func parseConfig() *Config {
@@ -81,6 +86,7 @@ func parseConfig() *Config {
 		ChaffingMaxBytes: 64,
 	}
 
+	desktopStdinFlag := flag.Bool("desktop-stdin", false, "Read private desktop configuration from stdin")
 	configFileFlag := flag.String("c", "", "Path to JSON config file")
 	configURLFlag := flag.String("config", "", "atlant://... config URL or JSON file path")
 	serverFlag := flag.String("server", "", "Server address (host:port)")
@@ -96,15 +102,28 @@ func parseConfig() *Config {
 	pathFlag := flag.String("path", "", "XHTTP URL path endpoint")
 	modeFlag := flag.String("mode", "", "XHTTP mode: stream or packet-up")
 	fingerprintFlag := flag.String("fingerprint", "", "uTLS ClientHello fingerprint profile: chrome, firefox, safari, ios, edge, randomized")
+	quicFingerprintFlag := flag.String("quic-fingerprint", "", "QUIC browser profile: chrome_146, chrome_156, random_chrome")
 	paddingFlag := flag.Bool("padding", true, "Enable dynamic packet length padding")
 	minPaddingFlag := flag.Int("min-padding", 0, "Minimum padding bytes")
 	maxPaddingFlag := flag.Int("max-padding", 0, "Maximum padding bytes")
 	chaffingFlag := flag.Bool("chaffing", true, "Enable background chaffing micro-noise")
 	chaffingIntervalFlag := flag.Int("chaffing-interval", 0, "Chaffing interval in seconds")
 	muxFlag := flag.Bool("mux", false, "Enable Yamux stream multiplexing (default false = direct 1-to-1)")
+	upFlag := flag.Uint64("up-mbps", 0, "Aggregate upload limit in Mbps (0 = unlimited)")
+	downFlag := flag.Uint64("down-mbps", 0, "Aggregate download limit in Mbps (0 = unlimited)")
 	logLevelFlag := flag.String("loglevel", "", "Log level: debug, info, warn, error, none")
 
 	flag.Parse()
+	if *desktopStdinFlag {
+		scanner, err := readDesktopInput(os.Stdin, cfg)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		go func() { scanner.Scan(); p, _ := os.FindProcess(os.Getpid()); _ = p.Signal(syscall.SIGTERM) }()
+
+		return cfg
+	}
 
 	// Check if config file or URL was specified
 	fileToLoad := *configFileFlag
@@ -158,6 +177,12 @@ func parseConfig() *Config {
 		cfg.LocalPort = *localFlag
 	}
 	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "up-mbps" {
+			cfg.UpMbps = *upFlag
+		}
+		if f.Name == "down-mbps" {
+			cfg.DownMbps = *downFlag
+		}
 		if f.Name == "tun" {
 			cfg.Tun = *tunFlag
 		}
@@ -185,6 +210,9 @@ func parseConfig() *Config {
 	}
 	if *modeFlag != "" {
 		cfg.Mode = *modeFlag
+	}
+	if *quicFingerprintFlag != "" {
+		cfg.QUICFingerprint = *quicFingerprintFlag
 	}
 	if *fingerprintFlag != "" {
 		cfg.Fingerprint = *fingerprintFlag

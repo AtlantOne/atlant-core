@@ -21,57 +21,59 @@ import (
 )
 
 type Config struct {
-	ManagedStdin     bool     `json:"-"`
-	ServerAddr       string   `json:"server"`
-	BackupServers    []string `json:"backup_servers"`
-	SNI              string   `json:"sni"`
-	PBK              string   `json:"pbk"`
-	User             string   `json:"user"`
-	LocalPort        string   `json:"local"`
-	Tun              bool     `json:"tun"`
-	TunName          string   `json:"tun_name"`
-	TunAddr          string   `json:"tun_addr"`
-	TunGw            string   `json:"tun_gw"`
-	TunMask          string   `json:"tun_mask"`
-	TunDNS           string   `json:"tun_dns"`
-	KillSwitch       bool     `json:"kill_switch"`
-	Transport        string   `json:"transport"`
-	Path             string   `json:"path"`
-	Mode             string   `json:"mode"`
-	ContentType      string   `json:"content_type"`
-	TrafficMode      string   `json:"traffic_mode"`   // "split", "tcp", "udp"
-	UDPProto         string   `json:"udp_proto"`      // "quic", "tcp"
-	TCPProto         string   `json:"tcp_proto"`      // "reality", "xhttp"
-	RouteMode        string   `json:"route_mode"`     // "all", "proxy_apps", "bypass_apps"
-	ProxyApps        []string `json:"proxy_apps"`     // Executables to proxy when RouteMode == "proxy_apps"
-	BypassApps       []string `json:"bypass_apps"`    // Executables to bypass when RouteMode == "bypass_apps"
-	ProxyDomains     []string `json:"proxy_domains"`  // Domains to proxy (legacy fallback)
-	DirectDomains    []string `json:"direct_domains"` // Domains to bypass (legacy fallback)
-	ServerPubKey     string   `json:"server_pub_key"` // Static X25519 public key for 2-ECDH MitM defense
-	WireVersion      int      `json:"wire_version,omitempty"`
-	UDPMode          string   `json:"udp_mode"`           // Alias/fallback for UDP protocol mode
-	UpMbps           uint64   `json:"up_mbps"`            // Upload limit in Mbps (0 = unlimited)
-	DownMbps         uint64   `json:"down_mbps"`          // Download limit in Mbps (0 = unlimited)
-	MTU              int      `json:"mtu"`                // Maximum Transmission Unit (default 1420)
-	AllowLAN         bool     `json:"allow_lan"`          // Allow SOCKS5 from local network
-	BlockIPv6        bool     `json:"block_ipv6"`         // Block IPv6 to prevent leaks
-	Mux              bool     `json:"mux"`                // Enable Yamux stream multiplexing (default false = direct 1-to-1)
-	LogLevel         string   `json:"log_level"`          // "debug", "info", "warn", "error", "none"
-	FakeDNS          bool     `json:"fake_dns"`           // Synthetic 0ms DNS resolver pool (198.18.0.0/15)
-	TrafficPadding   bool     `json:"traffic_padding"`    // Random packet length padding against ML DPI models
-	AutoFallback     bool     `json:"auto_fallback"`      // Happy Eyeballs v2 seamless QUIC <-> TCP handover
-	PortHopping      bool     `json:"port_hopping"`       // Dynamic UDP port rotation upon TSPU throttling
-	RemoteDNS        bool     `json:"remote_dns"`         // Encrypted remote DNS tunnel stream
-	DecoyTraffic     bool     `json:"decoy_traffic"`      // Periodic realistic background decoy requests
-	ZeroRTT          bool     `json:"zero_rtt"`           // 0-RTT session resumption tokens
-	Fingerprint      string   `json:"fingerprint"`        // uTLS profile: "chrome", "firefox", "safari", "ios", "edge", "randomized"
-	PaddingEnabled   bool     `json:"padding_enabled"`    // Random frame padding against ML-based DPI
-	MinPadding       int      `json:"min_padding"`        // Minimum padding bytes (e.g. 16..64)
-	MaxPadding       int      `json:"max_padding"`        // Maximum padding bytes (e.g. 64..512)
-	ChaffingEnabled  bool     `json:"chaffing_enabled"`   // Background heartbeat micro-noise
-	ChaffingInterval int      `json:"chaffing_interval"`  // Seconds between chaffing pulses
-	ChaffingMinBytes int      `json:"chaffing_min_bytes"` // Minimum chaffing bytes
-	ChaffingMaxBytes int      `json:"chaffing_max_bytes"` // Maximum chaffing bytes
+	QUICParallelConnections int      `json:"quic_parallel_connections,omitempty"`
+	ManagedStdin            bool     `json:"-"`
+	ServerAddr              string   `json:"server"`
+	BackupServers           []string `json:"backup_servers"`
+	SNI                     string   `json:"sni"`
+	PBK                     string   `json:"pbk"`
+	User                    string   `json:"user"`
+	LocalPort               string   `json:"local"`
+	Tun                     bool     `json:"tun"`
+	TunName                 string   `json:"tun_name"`
+	TunAddr                 string   `json:"tun_addr"`
+	TunGw                   string   `json:"tun_gw"`
+	TunMask                 string   `json:"tun_mask"`
+	TunDNS                  string   `json:"tun_dns"`
+	KillSwitch              bool     `json:"kill_switch"`
+	Transport               string   `json:"transport"`
+	Path                    string   `json:"path"`
+	Mode                    string   `json:"mode"`
+	ContentType             string   `json:"content_type"`
+	TrafficMode             string   `json:"traffic_mode"`   // "split", "tcp", "udp"
+	UDPProto                string   `json:"udp_proto"`      // "quic", "tcp"
+	TCPProto                string   `json:"tcp_proto"`      // "reality", "xhttp"
+	RouteMode               string   `json:"route_mode"`     // "all", "proxy_apps", "bypass_apps"
+	ProxyApps               []string `json:"proxy_apps"`     // Executables to proxy when RouteMode == "proxy_apps"
+	BypassApps              []string `json:"bypass_apps"`    // Executables to bypass when RouteMode == "bypass_apps"
+	ProxyDomains            []string `json:"proxy_domains"`  // Domains to proxy (legacy fallback)
+	DirectDomains           []string `json:"direct_domains"` // Domains to bypass (legacy fallback)
+	ServerPubKey            string   `json:"server_pub_key"` // Static X25519 public key for 2-ECDH MitM defense
+	WireVersion             int      `json:"wire_version,omitempty"`
+	UDPMode                 string   `json:"udp_mode"`        // Alias/fallback for UDP protocol mode
+	UpMbps                  uint64   `json:"up_mbps"`         // Upload limit in Mbps (0 = unlimited)
+	DownMbps                uint64   `json:"down_mbps"`       // Download limit in Mbps (0 = unlimited)
+	MTU                     int      `json:"mtu"`             // Maximum Transmission Unit (default 1420)
+	AllowLAN                bool     `json:"allow_lan"`       // Allow SOCKS5 from local network
+	BlockIPv6               bool     `json:"block_ipv6"`      // Block IPv6 to prevent leaks
+	Mux                     bool     `json:"mux"`             // Enable Yamux stream multiplexing (default false = direct 1-to-1)
+	LogLevel                string   `json:"log_level"`       // "debug", "info", "warn", "error", "none"
+	FakeDNS                 bool     `json:"fake_dns"`        // Synthetic 0ms DNS resolver pool (198.18.0.0/15)
+	TrafficPadding          bool     `json:"traffic_padding"` // Random packet length padding against ML DPI models
+	AutoFallback            bool     `json:"auto_fallback"`   // Happy Eyeballs v2 seamless QUIC <-> TCP handover
+	PortHopping             bool     `json:"port_hopping"`    // Dynamic UDP port rotation upon TSPU throttling
+	RemoteDNS               bool     `json:"remote_dns"`      // Encrypted remote DNS tunnel stream
+	DecoyTraffic            bool     `json:"decoy_traffic"`   // Periodic realistic background decoy requests
+	ZeroRTT                 bool     `json:"zero_rtt"`        // 0-RTT session resumption tokens
+	Fingerprint             string   `json:"fingerprint"`     // uTLS profile: "chrome", "firefox", "safari", "ios", "edge", "randomized"
+	QUICFingerprint         string   `json:"quic_fingerprint,omitempty"`
+	PaddingEnabled          bool     `json:"padding_enabled"`    // Random frame padding against ML-based DPI
+	MinPadding              int      `json:"min_padding"`        // Minimum padding bytes (e.g. 16..64)
+	MaxPadding              int      `json:"max_padding"`        // Maximum padding bytes (e.g. 64..512)
+	ChaffingEnabled         bool     `json:"chaffing_enabled"`   // Background heartbeat micro-noise
+	ChaffingInterval        int      `json:"chaffing_interval"`  // Seconds between chaffing pulses
+	ChaffingMinBytes        int      `json:"chaffing_min_bytes"` // Minimum chaffing bytes
+	ChaffingMaxBytes        int      `json:"chaffing_max_bytes"` // Maximum chaffing bytes
 }
 
 func parseConfig() *Config {
@@ -160,6 +162,7 @@ func parseConfig() *Config {
 	remoteDNSFlag := flag.Bool("remote-dns", true, "Encrypted remote DNS tunnel stream")
 	logLevelFlag := flag.String("loglevel", "", "Log level: debug, info, warn, error, none")
 	fingerprintFlag := flag.String("fingerprint", "", "uTLS ClientHello fingerprint profile: chrome, firefox, safari, ios, edge, randomized")
+	quicFingerprintFlag := flag.String("quic-fingerprint", "", "QUIC browser profile: chrome_146, chrome_156, random_chrome")
 	paddingEnabledFlag := flag.Bool("padding", true, "Enable random frame padding")
 	minPaddingFlag := flag.Int("min-padding", 0, "Minimum padding bytes")
 	maxPaddingFlag := flag.Int("max-padding", 0, "Maximum padding bytes")
@@ -173,6 +176,9 @@ func parseConfig() *Config {
 		cfg.WireVersion = *wireVersion
 	}
 
+	if *quicFingerprintFlag != "" {
+		cfg.QUICFingerprint = *quicFingerprintFlag
+	}
 	if *fingerprintFlag != "" {
 		cfg.Fingerprint = *fingerprintFlag
 	}
@@ -403,56 +409,58 @@ func loadConfigFromFile(filename string) *Config {
 	}
 
 	var cfg struct {
-		ServerAddr       string   `json:"server"`
-		BackupServers    []string `json:"backup_servers"`
-		SNI              string   `json:"sni"`
-		PBK              string   `json:"pbk"`
-		User             string   `json:"user"`
-		LocalPort        string   `json:"local"`
-		Tun              bool     `json:"tun"`
-		TunName          string   `json:"tun_name"`
-		TunAddr          string   `json:"tun_addr"`
-		TunGw            string   `json:"tun_gw"`
-		TunMask          string   `json:"tun_mask"`
-		TunDNS           string   `json:"tun_dns"`
-		KillSwitch       bool     `json:"kill_switch"`
-		Transport        string   `json:"transport"`
-		Path             string   `json:"path"`
-		Mode             string   `json:"mode"`
-		ContentType      string   `json:"content_type"`
-		TrafficMode      string   `json:"traffic_mode"`
-		UDPProto         string   `json:"udp_proto"`
-		TCPProto         string   `json:"tcp_proto"`
-		RouteMode        string   `json:"route_mode"`
-		ProxyApps        []string `json:"proxy_apps"`
-		BypassApps       []string `json:"bypass_apps"`
-		ProxyDomains     []string `json:"proxy_domains"`
-		DirectDomains    []string `json:"direct_domains"`
-		ServerPubKey     string   `json:"server_pub_key"`
-		WireVersion      int      `json:"wire_version,omitempty"`
-		UDPMode          string   `json:"udp_mode"`
-		UpMbps           uint64   `json:"up_mbps"`
-		DownMbps         uint64   `json:"down_mbps"`
-		MTU              int      `json:"mtu"`
-		AllowLAN         bool     `json:"allow_lan"`
-		BlockIPv6        bool     `json:"block_ipv6"`
-		Mux              bool     `json:"mux"`
-		LogLevel         string   `json:"log_level"`
-		FakeDNS          *bool    `json:"fake_dns"`
-		TrafficPadding   *bool    `json:"traffic_padding"`
-		AutoFallback     *bool    `json:"auto_fallback"`
-		PortHopping      *bool    `json:"port_hopping"`
-		RemoteDNS        *bool    `json:"remote_dns"`
-		DecoyTraffic     *bool    `json:"decoy_traffic"`
-		ZeroRTT          *bool    `json:"zero_rtt"`
-		Fingerprint      string   `json:"fingerprint"`
-		PaddingEnabled   *bool    `json:"padding_enabled"`
-		MinPadding       int      `json:"min_padding"`
-		MaxPadding       int      `json:"max_padding"`
-		ChaffingEnabled  *bool    `json:"chaffing_enabled"`
-		ChaffingInterval int      `json:"chaffing_interval"`
-		ChaffingMinBytes int      `json:"chaffing_min_bytes"`
-		ChaffingMaxBytes int      `json:"chaffing_max_bytes"`
+		ServerAddr              string   `json:"server"`
+		BackupServers           []string `json:"backup_servers"`
+		SNI                     string   `json:"sni"`
+		PBK                     string   `json:"pbk"`
+		User                    string   `json:"user"`
+		LocalPort               string   `json:"local"`
+		Tun                     bool     `json:"tun"`
+		TunName                 string   `json:"tun_name"`
+		TunAddr                 string   `json:"tun_addr"`
+		TunGw                   string   `json:"tun_gw"`
+		TunMask                 string   `json:"tun_mask"`
+		TunDNS                  string   `json:"tun_dns"`
+		KillSwitch              bool     `json:"kill_switch"`
+		Transport               string   `json:"transport"`
+		Path                    string   `json:"path"`
+		Mode                    string   `json:"mode"`
+		ContentType             string   `json:"content_type"`
+		TrafficMode             string   `json:"traffic_mode"`
+		UDPProto                string   `json:"udp_proto"`
+		TCPProto                string   `json:"tcp_proto"`
+		RouteMode               string   `json:"route_mode"`
+		ProxyApps               []string `json:"proxy_apps"`
+		BypassApps              []string `json:"bypass_apps"`
+		ProxyDomains            []string `json:"proxy_domains"`
+		DirectDomains           []string `json:"direct_domains"`
+		ServerPubKey            string   `json:"server_pub_key"`
+		WireVersion             int      `json:"wire_version,omitempty"`
+		UDPMode                 string   `json:"udp_mode"`
+		UpMbps                  uint64   `json:"up_mbps"`
+		DownMbps                uint64   `json:"down_mbps"`
+		MTU                     int      `json:"mtu"`
+		AllowLAN                bool     `json:"allow_lan"`
+		BlockIPv6               bool     `json:"block_ipv6"`
+		Mux                     bool     `json:"mux"`
+		LogLevel                string   `json:"log_level"`
+		FakeDNS                 *bool    `json:"fake_dns"`
+		TrafficPadding          *bool    `json:"traffic_padding"`
+		AutoFallback            *bool    `json:"auto_fallback"`
+		PortHopping             *bool    `json:"port_hopping"`
+		RemoteDNS               *bool    `json:"remote_dns"`
+		DecoyTraffic            *bool    `json:"decoy_traffic"`
+		ZeroRTT                 *bool    `json:"zero_rtt"`
+		Fingerprint             string   `json:"fingerprint"`
+		QUICFingerprint         string   `json:"quic_fingerprint"`
+		QUICParallelConnections int      `json:"quic_parallel_connections"`
+		PaddingEnabled          *bool    `json:"padding_enabled"`
+		MinPadding              int      `json:"min_padding"`
+		MaxPadding              int      `json:"max_padding"`
+		ChaffingEnabled         *bool    `json:"chaffing_enabled"`
+		ChaffingInterval        int      `json:"chaffing_interval"`
+		ChaffingMinBytes        int      `json:"chaffing_min_bytes"`
+		ChaffingMaxBytes        int      `json:"chaffing_max_bytes"`
 	}
 
 	if err := json.Unmarshal(data, &cfg); err != nil {
@@ -596,56 +604,58 @@ func loadConfigFromFile(filename string) *Config {
 		cfg.WireVersion = 4
 	}
 	return &Config{
-		ServerAddr:       cfg.ServerAddr,
-		BackupServers:    cfg.BackupServers,
-		SNI:              cfg.SNI,
-		PBK:              cfg.PBK,
-		User:             strings.TrimSpace(cfg.User),
-		LocalPort:        cfg.LocalPort,
-		Tun:              cfg.Tun,
-		TunName:          cfg.TunName,
-		TunAddr:          cfg.TunAddr,
-		TunGw:            cfg.TunGw,
-		TunMask:          cfg.TunMask,
-		TunDNS:           cfg.TunDNS,
-		KillSwitch:       cfg.KillSwitch,
-		Transport:        transport,
-		Path:             cfg.Path,
-		Mode:             cfg.Mode,
-		ContentType:      cfg.ContentType,
-		TrafficMode:      cfg.TrafficMode,
-		UDPProto:         udpProto,
-		UDPMode:          cfg.UDPMode,
-		TCPProto:         tcpProto,
-		RouteMode:        cfg.RouteMode,
-		ProxyApps:        cfg.ProxyApps,
-		BypassApps:       cfg.BypassApps,
-		ProxyDomains:     cfg.ProxyDomains,
-		DirectDomains:    cfg.DirectDomains,
-		ServerPubKey:     cfg.ServerPubKey,
-		WireVersion:      cfg.WireVersion,
-		UpMbps:           cfg.UpMbps,
-		DownMbps:         cfg.DownMbps,
-		MTU:              cfg.MTU,
-		AllowLAN:         cfg.AllowLAN,
-		BlockIPv6:        cfg.BlockIPv6,
-		Mux:              cfg.Mux,
-		LogLevel:         cfg.LogLevel,
-		FakeDNS:          fakeDNS,
-		TrafficPadding:   trafficPadding,
-		AutoFallback:     autoFallback,
-		PortHopping:      portHopping,
-		RemoteDNS:        remoteDNS,
-		DecoyTraffic:     decoyTraffic,
-		ZeroRTT:          zeroRTT,
-		Fingerprint:      fingerprint,
-		PaddingEnabled:   paddingEnabled,
-		MinPadding:       minPadding,
-		MaxPadding:       maxPadding,
-		ChaffingEnabled:  chaffingEnabled,
-		ChaffingInterval: chaffingInterval,
-		ChaffingMinBytes: chaffingMinBytes,
-		ChaffingMaxBytes: chaffingMaxBytes,
+		ServerAddr:              cfg.ServerAddr,
+		BackupServers:           cfg.BackupServers,
+		SNI:                     cfg.SNI,
+		PBK:                     cfg.PBK,
+		User:                    strings.TrimSpace(cfg.User),
+		LocalPort:               cfg.LocalPort,
+		Tun:                     cfg.Tun,
+		TunName:                 cfg.TunName,
+		TunAddr:                 cfg.TunAddr,
+		TunGw:                   cfg.TunGw,
+		TunMask:                 cfg.TunMask,
+		TunDNS:                  cfg.TunDNS,
+		KillSwitch:              cfg.KillSwitch,
+		Transport:               transport,
+		Path:                    cfg.Path,
+		Mode:                    cfg.Mode,
+		ContentType:             cfg.ContentType,
+		TrafficMode:             cfg.TrafficMode,
+		UDPProto:                udpProto,
+		UDPMode:                 cfg.UDPMode,
+		TCPProto:                tcpProto,
+		RouteMode:               cfg.RouteMode,
+		ProxyApps:               cfg.ProxyApps,
+		BypassApps:              cfg.BypassApps,
+		ProxyDomains:            cfg.ProxyDomains,
+		DirectDomains:           cfg.DirectDomains,
+		ServerPubKey:            cfg.ServerPubKey,
+		WireVersion:             cfg.WireVersion,
+		UpMbps:                  cfg.UpMbps,
+		DownMbps:                cfg.DownMbps,
+		MTU:                     cfg.MTU,
+		AllowLAN:                cfg.AllowLAN,
+		BlockIPv6:               cfg.BlockIPv6,
+		Mux:                     cfg.Mux,
+		LogLevel:                cfg.LogLevel,
+		FakeDNS:                 fakeDNS,
+		TrafficPadding:          trafficPadding,
+		AutoFallback:            autoFallback,
+		PortHopping:             portHopping,
+		RemoteDNS:               remoteDNS,
+		DecoyTraffic:            decoyTraffic,
+		ZeroRTT:                 zeroRTT,
+		Fingerprint:             fingerprint,
+		QUICFingerprint:         cfg.QUICFingerprint,
+		QUICParallelConnections: cfg.QUICParallelConnections,
+		PaddingEnabled:          paddingEnabled,
+		MinPadding:              minPadding,
+		MaxPadding:              maxPadding,
+		ChaffingEnabled:         chaffingEnabled,
+		ChaffingInterval:        chaffingInterval,
+		ChaffingMinBytes:        chaffingMinBytes,
+		ChaffingMaxBytes:        chaffingMaxBytes,
 	}
 }
 
@@ -661,6 +671,8 @@ var (
 )
 
 func main() {
+	defer bulkQUICPool.Reset()
+	defer clientBandwidth.Reset()
 	cfg := parseConfig()
 	InitCoreLogger(cfg.LogLevel)
 	activeCfg = cfg

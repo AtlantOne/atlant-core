@@ -88,6 +88,7 @@ type activeSessionItem struct {
 
 var (
 	usersMu           sync.RWMutex
+	usersFlushMu      sync.Mutex
 	usersDB           = &userDB{Version: 1, Users: map[string]*userRecord{}}
 	usersStorage      = &MemoryCachedStorage{}
 	lastUsersMTime    time.Time
@@ -274,8 +275,17 @@ func recordUserTraffic(name string, upBytes, downBytes uint64) bool {
 	if name == "" || (upBytes == 0 && downBytes == 0) {
 		return name != ""
 	}
-	usersMu.Lock()
+	lock, unlock := usersMu.RLock, usersMu.RUnlock
+	lock()
 	rec, ok := usersDB.Users[name]
+	// Unlimited accounts use atomic counters under a shared configuration
+	// lock. Legacy per-account limits still reserve bytes exclusively.
+	if rec != nil && rec.TotalLimit > 0 {
+		unlock()
+		lock, unlock = usersMu.Lock, usersMu.Unlock
+		lock()
+		rec, ok = usersDB.Users[name]
+	}
 	budget := quotaBudgetLocked(name)
 	allowed := ok && rec != nil && rec.Enabled && subscriptionUserAllowed(name) && (rec.ExpiresAt == 0 || time.Now().Unix() < rec.ExpiresAt) && (budget != nil || !subscriptionRequiresQuota(name))
 	if allowed && budget == nil && rec.TotalLimit > 0 {
@@ -284,9 +294,9 @@ func recordUserTraffic(name string, upBytes, downBytes uint64) bool {
 		allowed = used < rec.TotalLimit && amount <= rec.TotalLimit-used
 	}
 	if allowed && budget != nil {
-		usersMu.Unlock()
+		unlock()
 		allowed = budget.consume(upBytes, downBytes)
-		usersMu.Lock()
+		lock()
 		rec = usersDB.Users[name]
 		allowed = allowed && rec != nil && rec.Enabled && subscriptionUserAllowed(name) && (rec.ExpiresAt == 0 || time.Now().Unix() < rec.ExpiresAt) && quotaBudgetLocked(name) == budget
 	}
@@ -296,7 +306,7 @@ func recordUserTraffic(name string, upBytes, downBytes uint64) bool {
 		atomic.StoreInt64(&rec.LastSeen, time.Now().Unix())
 		usersDirty.Store(true)
 	}
-	usersMu.Unlock()
+	unlock()
 	if !allowed {
 		reason := userAccessDenialReason(name)
 		if reason == "" {
@@ -636,14 +646,29 @@ func saveUsersLocked(path string, db *userDB) error {
 }
 
 func saveUsers(path string) error {
+	usersFlushMu.Lock()
+	defer usersFlushMu.Unlock()
 	usersMu.Lock()
-	defer usersMu.Unlock()
-	err := saveUsersLocked(path, usersDB)
+	store, err := usersStoreLocked(path)
 	if err != nil {
-		log.Printf("[USERS] Save failed: %v", err)
+		usersMu.Unlock()
+		return err
+	}
+	snapshot := cloneUserDBLocked(usersDB)
+	revision := store.revision.Load()
+	// Clear before releasing the lock: new packets must mark the next flush
+	// dirty even if they arrive while this snapshot is being committed.
+	usersDirty.Store(false)
+	usersMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err = store.saveUnchanged(ctx, snapshot, revision)
+	if err != nil {
 		usersDirty.Store(true)
-	} else {
-		usersDirty.Store(false)
+		if err == errUsersSnapshotChanged {
+			return nil // A newer administrative commit superseded this snapshot.
+		}
+		log.Printf("[USERS] Save failed: %v", err)
 	}
 	return err
 }

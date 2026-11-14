@@ -21,8 +21,10 @@ import (
 
 type quicNetStream struct {
 	quicpeer.ClientStream
-	localAddr  net.Addr
-	remoteAddr net.Addr
+	localAddr   net.Addr
+	remoteAddr  net.Addr
+	release     func()
+	releaseOnce sync.Once
 }
 
 func (q *quicNetStream) LocalAddr() net.Addr {
@@ -33,74 +35,118 @@ func (q *quicNetStream) RemoteAddr() net.Addr {
 	return wire.StreamAddr(q.remoteAddr)
 }
 
+func (q *quicNetStream) Close() error {
+	if q.release != nil {
+		defer q.releaseOnce.Do(q.release)
+	}
+	q.ClientStream.CancelRead(0)
+	q.ClientStream.CancelWrite(0)
+	return nil
+}
+
+func (q *quicNetStream) CloseWrite() error { return q.ClientStream.Close() }
+
+const maxQUICCarriers = 4
+
+type quicCarrier struct {
+	conn      quicpeer.ClientConn
+	transport io.Closer
+	packet    net.PacketConn
+	mu        sync.Mutex
+	dialing   bool
+	wait      chan struct{}
+	lastErr   error
+	cooldown  wire.DialCooldown
+	active    int
+}
+
 var (
-	quicClientConn      quicpeer.ClientConn
-	quicClientTransport io.Closer
-	quicClientPacket    net.PacketConn
-	quicClientMu        sync.Mutex
-	quicDialInProgress  bool
-	quicDialWaitChan    chan struct{}
-	quicDialLastErr     error
-	quicDialCooldown    wire.DialCooldown
+	quicCarriers   [maxQUICCarriers]quicCarrier
+	quicCarriersMu sync.Mutex
 )
 
-func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
+func acquireQUICCarrier(cfg *Config, network string) (*quicCarrier, func()) {
+	limit := 1
+	if network == "tcp" && cfg.WireVersion == 7 && cfg.QUICParallelConnections > 1 {
+		limit = min(cfg.QUICParallelConnections, maxQUICCarriers)
+	}
+	quicCarriersMu.Lock()
+	selected := &quicCarriers[0]
+	for i := 1; i < limit; i++ {
+		if quicCarriers[i].active < selected.active {
+			selected = &quicCarriers[i]
+		}
+	}
+	selected.active++
+	quicCarriersMu.Unlock()
+	return selected, func() {
+		quicCarriersMu.Lock()
+		selected.active--
+		quicCarriersMu.Unlock()
+	}
+}
+
+func getOrDialQUICClient(cfg *Config) (quicpeer.ClientConn, error) {
+	return quicCarriers[0].getOrDial(cfg)
+}
+
+func (carrier *quicCarrier) getOrDial(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 	if err := settings.Profile(cfg.ServerAddr, cfg.SNI, cfg.PBK, cfg.User); err != nil {
 		return nil, err
 	}
-	quicClientMu.Lock()
-	if quicClientConn != nil {
+	carrier.mu.Lock()
+	if carrier.conn != nil {
 		select {
-		case <-quicClientConn.Context().Done():
-			if quicClientTransport != nil {
-				_ = quicClientTransport.Close()
-				quicClientTransport = nil
+		case <-carrier.conn.Context().Done():
+			if carrier.transport != nil {
+				_ = carrier.transport.Close()
+				carrier.transport = nil
 			}
-			if quicClientPacket != nil {
-				_ = quicClientPacket.Close()
-				quicClientPacket = nil
+			if carrier.packet != nil {
+				_ = carrier.packet.Close()
+				carrier.packet = nil
 			}
-			quicClientConn = nil
+			carrier.conn = nil
 		default:
-			c := quicClientConn
-			quicClientMu.Unlock()
+			c := carrier.conn
+			carrier.mu.Unlock()
 			return c, nil
 		}
 	}
 
-	if quicDialInProgress {
-		waitCh := quicDialWaitChan
-		quicClientMu.Unlock()
+	if carrier.dialing {
+		waitCh := carrier.wait
+		carrier.mu.Unlock()
 		<-waitCh
-		quicClientMu.Lock()
-		if quicClientConn != nil {
-			c := quicClientConn
-			quicClientMu.Unlock()
+		carrier.mu.Lock()
+		if carrier.conn != nil {
+			c := carrier.conn
+			carrier.mu.Unlock()
 			return c, nil
 		}
-		err := quicDialLastErr
-		quicClientMu.Unlock()
+		err := carrier.lastErr
+		carrier.mu.Unlock()
 		if err != nil {
 			return nil, err
 		}
 		return nil, fmt.Errorf("quic dial completed without connection")
 	}
 
-	if err := quicDialCooldown.RetryError(time.Now()); err != nil {
-		quicClientMu.Unlock()
+	if err := carrier.cooldown.RetryError(time.Now()); err != nil {
+		carrier.mu.Unlock()
 		return nil, err
 	}
-	quicDialInProgress = true
-	quicDialWaitChan = make(chan struct{})
-	quicClientMu.Unlock()
+	carrier.dialing = true
+	carrier.wait = make(chan struct{})
+	carrier.mu.Unlock()
 
 	defer func() {
-		quicClientMu.Lock()
-		quicDialLastErr = resultErr
-		quicDialCooldown.Record(resultErr, time.Now())
-		quicDialInProgress = false
-		close(quicDialWaitChan)
-		quicClientMu.Unlock()
+		carrier.mu.Lock()
+		carrier.lastErr = resultErr
+		carrier.cooldown.Record(resultErr, time.Now())
+		carrier.dialing = false
+		close(carrier.wait)
+		carrier.mu.Unlock()
 	}()
 
 	dialTimeout := 5 * time.Second
@@ -112,9 +158,9 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 	serverUDPAddr, err := quicpeer.ResolveUDP(ctx, cfg.ServerAddr)
 	if err != nil {
 		dialErr := fmt.Errorf("resolve server addr: %w", err)
-		quicClientMu.Lock()
-		quicDialLastErr = dialErr
-		quicClientMu.Unlock()
+		carrier.mu.Lock()
+		carrier.lastErr = dialErr
+		carrier.mu.Unlock()
 		return nil, dialErr
 	}
 
@@ -125,9 +171,9 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 	pc, err := net.ListenPacket(packetNetwork, packetBind)
 	if err != nil {
 		dialErr := fmt.Errorf("listen packet: %w", err)
-		quicClientMu.Lock()
-		quicDialLastErr = dialErr
-		quicClientMu.Unlock()
+		carrier.mu.Lock()
+		carrier.lastErr = dialErr
+		carrier.mu.Unlock()
 		return nil, dialErr
 	}
 	if uConn, ok := pc.(*net.UDPConn); ok {
@@ -184,6 +230,9 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 	quicpeer.ConfigureTLSPrivacy(tlsConfig, cfg.WireVersion)
 
 	quicConfig := quicpeer.ClientConfig()
+	if carrier != &quicCarriers[0] {
+		quicConfig.KeepAlivePeriod = 0
+	}
 
 	var direct []quicpeer.DirectCredentials
 	if cfg.WireVersion == 7 {
@@ -194,14 +243,14 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 		}
 		direct = []quicpeer.DirectCredentials{{User: cfg.User, Key: userKey, ServerPublicKey: serverKey}}
 	}
-	conn, closer, err := quicpeer.DialClient(ctx, transport, serverUDPAddr, tlsConfig, quicConfig, cfg.WireVersion, direct...)
+	conn, closer, err := quicpeer.DialClientWithProfile(ctx, transport, serverUDPAddr, tlsConfig, quicConfig, cfg.WireVersion, cfg.QUICFingerprint, direct...)
 	if err != nil {
 		_ = closer.Close()
 		_ = pc.Close()
 		dialErr := fmt.Errorf("quic dial: %w", err)
-		quicClientMu.Lock()
-		quicDialLastErr = dialErr
-		quicClientMu.Unlock()
+		carrier.mu.Lock()
+		carrier.lastErr = dialErr
+		carrier.mu.Unlock()
 		return nil, dialErr
 	}
 
@@ -209,26 +258,50 @@ func getOrDialQUICClient(cfg *Config) (_ quicpeer.ClientConn, resultErr error) {
 		_ = conn.CloseWithError(0x100, "peer authentication failed")
 		_ = closer.Close()
 		_ = pc.Close()
-		quicClientMu.Lock()
-		quicDialLastErr = err
-		quicClientMu.Unlock()
+		carrier.mu.Lock()
+		carrier.lastErr = err
+		carrier.mu.Unlock()
 		return nil, err
 	}
-	quicClientMu.Lock()
-	quicClientConn = conn
-	quicClientTransport = closer
-	quicClientPacket = pc
-	quicDialLastErr = nil
-	quicClientMu.Unlock()
+	carrier.mu.Lock()
+	carrier.conn = conn
+	carrier.transport = closer
+	carrier.packet = pc
+	carrier.lastErr = nil
+	carrier.mu.Unlock()
+	if carrier != &quicCarriers[0] {
+		context.AfterFunc(conn.Context(), func() {
+			carrier.mu.Lock()
+			defer carrier.mu.Unlock()
+			if carrier.conn == conn {
+				carrier.conn, carrier.transport, carrier.packet = nil, nil, nil
+				_ = closer.Close()
+				_ = pc.Close()
+			}
+		})
+	}
 
 	return conn, nil
 }
 
-func dialQUICStream(cfg *Config, network, addr string) (net.Conn, error) {
-	conn, err := getOrDialQUICClient(cfg)
+func dialPrimaryQUICStream(cfg *Config, network, addr string) (net.Conn, error) {
+	carrier, release := acquireQUICCarrier(cfg, network)
+	conn, err := carrier.getOrDial(cfg)
+	if err != nil && carrier != &quicCarriers[0] {
+		release()
+		carrier, release = acquireQUICCarrier(cfg, "")
+		conn, err = carrier.getOrDial(cfg)
+	}
 	if err != nil {
+		release()
 		return nil, err
 	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			release()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stream, err := conn.OpenStreamSync(ctx)
@@ -251,10 +324,12 @@ func dialQUICStream(cfg *Config, network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 	_ = stream.SetWriteDeadline(time.Time{})
+	transferred = true
 	return &quicNetStream{
 		ClientStream: stream,
 		localAddr:    conn.LocalAddr(),
 		remoteAddr:   conn.RemoteAddr(),
+		release:      release,
 	}, nil
 }
 

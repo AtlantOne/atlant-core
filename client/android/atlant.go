@@ -39,6 +39,7 @@ type Config struct {
 	ChaffingInterval int
 	ChaffingMinBytes int
 	ChaffingMaxBytes int
+	QUICFingerprint  string
 	Fingerprint      string
 }
 
@@ -135,6 +136,7 @@ var (
 	optRemoteDNS        bool   = true
 	optDecoyTraffic     bool   = false
 	optZeroRTT          bool   = true
+	optQUICFingerprint  string = "chrome_156"
 	optFingerprint      string = "firefox"
 	optMinPadding       int    = 32
 	optMaxPadding       int    = 256
@@ -191,6 +193,13 @@ func SetFingerprint(fp string) {
 	optFingerprint = p
 	optMu.Unlock()
 }
+
+func SetQUICFingerprint(profile string) {
+	optMu.Lock()
+	defer optMu.Unlock()
+	optQUICFingerprint = strings.ToLower(strings.TrimSpace(profile))
+}
+func GetQUICFingerprint() string { optMu.RLock(); defer optMu.RUnlock(); return optQUICFingerprint }
 
 func GetFingerprint() string {
 	optMu.RLock()
@@ -414,6 +423,7 @@ func StartVPNWithUser(server, sni, pbk, user, serverPubKey, udpMode, tunAddr str
 		ChaffingMinBytes: 64,
 		ChaffingMaxBytes: 512,
 		Fingerprint:      GetFingerprint(),
+		QUICFingerprint:  GetQUICFingerprint(),
 	}
 	var ctx context.Context
 	ctx, cancelFunc = context.WithCancel(context.Background())

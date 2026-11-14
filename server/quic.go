@@ -48,12 +48,10 @@ func NewBrutalPacer(rateMbps uint64) *BrutalPacer {
 }
 
 func (p *BrutalPacer) Pace(bytesSent int) {
-	if p == nil || p.rateBps <= 0 {
+	if p == nil || p.rateBps <= 0 || bytesSent <= 0 {
 		return
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	now := time.Now()
 	elapsed := now.Sub(p.lastCheck).Seconds()
 	p.lastCheck = now
@@ -63,16 +61,17 @@ func (p *BrutalPacer) Pace(bytesSent int) {
 		p.tokens = p.maxTokens
 	}
 
+	// Reserve this write in the shared byte budget. Later callers see the
+	// outstanding debt, but they don't have to wait for the mutex holder to wake.
 	p.tokens -= int64(bytesSent)
+	var delay time.Duration
 	if p.tokens < 0 {
-		deficit := -p.tokens
-		sleepTime := time.Duration(float64(deficit) / float64(p.rateBps) * float64(time.Second))
-		if sleepTime > 0 {
-			time.Sleep(sleepTime)
-		}
-		p.tokens = 0
-		// The wait has already repaid this debt; do not credit it again.
-		p.lastCheck = time.Now()
+		delay = time.Duration(float64(-p.tokens) / float64(p.rateBps) * float64(time.Second))
+	}
+	p.mu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
 	}
 }
 
@@ -115,6 +114,8 @@ func serveUDPVPNServer(ctx context.Context, pc net.PacketConn, cfg *Config, iden
 }
 
 func serveUDPVPNServerReady(ctx context.Context, pc net.PacketConn, cfg *Config, identity *ecdh.PrivateKey, ready func()) error {
+	_, releaseBandwidth := acquireInboundBandwidth(cfg)
+	defer releaseBandwidth()
 	defer pc.Close()
 
 	// Expand socket buffers
@@ -218,8 +219,8 @@ func serveUDPVPNServerReady(ctx context.Context, pc net.PacketConn, cfg *Config,
 
 	upLimit := cfg.GetUpMbps()
 	pacerDesc := "Unlimited (Line Rate)"
-	if !cfg.Quic.DisablePacer && upLimit > 0 {
-		pacerDesc = fmt.Sprintf("%d Mbps (application rate limit)", upLimit)
+	if upLimit > 0 {
+		pacerDesc = fmt.Sprintf("%d Mbps (shared inbound rate limit)", upLimit)
 	}
 	log.Printf("[QUIC-REALITY] QUIC-Reality Core running on UDP %s (Decoy: %s, Speed limit: %s)", pc.LocalAddr(), donorUDP, pacerDesc)
 	if ready != nil {
@@ -237,10 +238,6 @@ func serveUDPVPNServerReady(ctx context.Context, pc net.PacketConn, cfg *Config,
 			}
 			continue
 		}
-		var sessionPacer *BrutalPacer
-		if !cfg.Quic.DisablePacer && upLimit > 0 {
-			sessionPacer = NewBrutalPacer(upLimit)
-		}
 		sessionMu.Lock()
 		sessionConns[conn] = struct{}{}
 		sessionMu.Unlock()
@@ -248,12 +245,20 @@ func serveUDPVPNServerReady(ctx context.Context, pc net.PacketConn, cfg *Config,
 		go func() {
 			defer sessions.Done()
 			defer func() { sessionMu.Lock(); delete(sessionConns, conn); sessionMu.Unlock() }()
-			handleQUICSession(conn, sessionPacer)
+			handleQUICSession(conn, nil, cfg)
 		}()
 	}
 }
 
-func handleQUICSession(conn *quic.Conn, pacer *BrutalPacer) {
+func handleQUICSession(conn *quic.Conn, pacer *BrutalPacer, configs ...*Config) {
+	listenerConfig := cfg
+	if len(configs) > 0 {
+		listenerConfig = configs[0]
+	}
+	budgetID := ""
+	if listenerConfig != nil {
+		budgetID = bandwidthID(listenerConfig)
+	}
 	defer conn.CloseWithError(0, "session closed")
 	ctx, cancel := context.WithCancel(conn.Context())
 	defer cancel()
@@ -309,14 +314,14 @@ func handleQUICSession(conn *quic.Conn, pacer *BrutalPacer) {
 			if err != nil {
 				break
 			}
-			go handleQUICStream(stream, pacer, boundUser, conn.RemoteAddr().String())
+			go handleQUICStream(stream, pacer, boundUser, conn.RemoteAddr().String(), budgetID)
 		}
 	}()
 
-	relayQUICDatagrams(ctx, conn, pacer, boundUser)
+	relayQUICDatagrams(ctx, conn, pacer, boundUser, budgetID)
 }
 
-func handleQUICStream(stream *quic.Stream, pacer *BrutalPacer, boundUser string, clientRemoteAddr string) {
+func handleQUICStream(stream *quic.Stream, pacer *BrutalPacer, boundUser string, clientRemoteAddr string, budgetID ...string) {
 	defer stream.Close()
 	defer stream.CancelRead(0)
 	_ = stream.SetReadDeadline(time.Now().Add(10 * time.Second))
@@ -349,11 +354,12 @@ func handleQUICStream(stream *quic.Stream, pacer *BrutalPacer, boundUser string,
 			log.Printf("[QUIC-STREAM-UDP] Failed to resolve %s: %v", destAddr, err)
 			return
 		}
-		uConn, err := net.DialUDP("udp", nil, udpAddr)
+		rawUDP, err := net.DialUDP("udp", nil, udpAddr)
 		if err != nil {
 			log.Printf("[QUIC-STREAM-UDP] Failed to dial %s: %v", destAddr, err)
 			return
 		}
+		uConn := paceServerTarget(rawUDP, true, budgetID...)
 		defer uConn.Close()
 
 		var wg sync.WaitGroup
@@ -425,7 +431,7 @@ func handleQUICStream(stream *quic.Stream, pacer *BrutalPacer, boundUser string,
 	}
 
 	if isSpeedtestAddr(destAddr) {
-		handleSpeedtestStream(stream, boundUser)
+		handleSpeedtestStream(paceInboundStream(stream, budgetID...), boundUser)
 		return
 	}
 
@@ -434,6 +440,7 @@ func handleQUICStream(stream *quic.Stream, pacer *BrutalPacer, boundUser string,
 		log.Printf("[QUIC-STREAM] Dial failed or SSRF blocked for %s: %v", destAddr, err)
 		return
 	}
+	destConn = paceServerTarget(destConn, false, budgetID...)
 	var closeOnce sync.Once
 	closeBoth := func() {
 		closeOnce.Do(func() {
@@ -468,7 +475,7 @@ func handleQUICStream(stream *quic.Stream, pacer *BrutalPacer, boundUser string,
 			}
 			if rErr != nil {
 				// Proper TCP half-close: inform remote server that client finished sending
-				if tcpConn, ok := destConn.(*net.TCPConn); ok {
+				if tcpConn, ok := destConn.(interface{ CloseWrite() error }); ok {
 					_ = tcpConn.CloseWrite()
 				}
 				break

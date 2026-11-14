@@ -345,10 +345,7 @@ func (c *realitySecureConn) Write(p []byte) (int, error) {
 	const maxPlaintext = 16384
 	total := 0
 	pending, records := 0, 0
-	batchLimit := 1
-	if c.xhttpBatch {
-		batchLimit = 4
-	}
+	batchLimit := 4 // Batch only bytes already supplied by this Write; never wait.
 	c.recordBuf.ResetBatch()
 	for len(p) > 0 {
 		chunkSize := len(p)
@@ -503,6 +500,8 @@ func (r *tcpListenerRuntime) handleFork(conn net.Conn) {
 }
 
 func (r *tcpListenerRuntime) handleForkContext(ctx context.Context, conn net.Conn) {
+	_, releaseBandwidth := acquireInboundBandwidth(r.config)
+	defer releaseBandwidth()
 	cfg := r.config
 	defer conn.Close()
 	defer func() {
@@ -990,11 +989,12 @@ func handleStream(stream net.Conn, authUser string, wireVersion int, inboundID .
 			log.Printf("[STREAM-UDP] Failed to resolve %s: %v", addr, err)
 			return
 		}
-		conn, err := net.DialUDP("udp", nil, udpAddr)
+		rawUDP, err := net.DialUDP("udp", nil, udpAddr)
 		if err != nil {
 			log.Printf("[STREAM-UDP] Failed to dial %s: %v", addr, err)
 			return
 		}
+		conn := paceServerTarget(rawUDP, true, inboundID...)
 		defer conn.Close()
 
 		var wg sync.WaitGroup
@@ -1074,7 +1074,7 @@ func handleStream(stream net.Conn, authUser string, wireVersion int, inboundID .
 	log.Printf("[STREAM-TCP] Proxy to %s", addr)
 
 	if isSpeedtestAddr(addr) {
-		handleSpeedtestStream(stream, authUser)
+		handleSpeedtestStream(paceInboundStream(stream, inboundID...), authUser)
 		return
 	}
 
@@ -1084,6 +1084,7 @@ func handleStream(stream net.Conn, authUser string, wireVersion int, inboundID .
 		log.Printf("[STREAM-TCP] Failed to dial %s: %v", addr, err)
 		return
 	}
+	destConn = paceServerTarget(destConn, false, inboundID...)
 	defer destConn.Close()
 
 	var wg sync.WaitGroup

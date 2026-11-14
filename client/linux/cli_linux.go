@@ -1,6 +1,7 @@
 package main
 
 import (
+	"atlant.local/protocol/tlsprofiles"
 	"bufio"
 	"context"
 	"crypto/sha256"
@@ -264,9 +265,13 @@ func cliValidateSettings(cfg Config) error {
 	if !member(cfg.Transport, "reality", "xhttp", "quic") || !member(cfg.TCPProto, "reality", "xhttp", "quic") || !member(cfg.UDPProto, "tcp", "quic") || !member(cfg.TrafficMode, "split", "tcp", "udp") {
 		return errors.New("invalid transport selection")
 	}
-	if !member(cfg.Fingerprint, "firefox", "firefox_auto", "firefox_120", "chrome", "chrome_144", "safari", "ios", "edge", "randomized") {
-		return errors.New("unsupported TLS fingerprint")
+	if _, err := tlsprofiles.Resolve(cfg.Fingerprint); err != nil {
+		return err
 	}
+	if !member(cfg.QUICFingerprint, "", "chrome_146", "chrome_156", "random_chrome") {
+		return errors.New("unsupported QUIC browser profile")
+	}
+
 	if cfg.MTU < 1200 || cfg.MTU > 9000 || cfg.MinPadding < 0 || cfg.MaxPadding < cfg.MinPadding || cfg.MaxPadding > 4096 || cfg.ChaffingInterval < 1 {
 		return errors.New("invalid MTU, padding or chaffing interval")
 	}
@@ -843,10 +848,19 @@ func (c *clientCLI) subscriptions(args []string) error {
 }
 
 func (c *clientCLI) settings(args []string) error {
+	if len(args) == 1 && args[0] == "profiles" {
+		for _, p := range tlsprofiles.Profiles() {
+			fmt.Fprintf(c.out, "%-18s %s\n", p.ID, p.Label)
+		}
+		fmt.Fprintln(c.out, "random_chrome, random_firefox, random_browser: choose a preset for each new connection\nQUIC: chrome_146, chrome_156, random_chrome\nsettings set fingerprint PROFILE\nsettings set quic_fingerprint PROFILE")
+		return nil
+	}
+
 	if len(args) == 0 || args[0] == "show" {
 		cfg := c.state.Settings
 		fmt.Fprintf(c.out, "Connection\n  TUN: %t   SOCKS: %s\n  Traffic: %s   TCP: %s   UDP: %s   Carrier: %s\n  TLS fingerprint: %s   Multiplexing: %t\n\nNetwork\n  MTU: %d   DNS: %s   FakeDNS: %t\n  TUN name: %s   Address: %s\n  IPv6 blocked: %t\n\nPadding and background traffic\n  Padding: %t   Range: %d–%d bytes\n  Chaffing: %t   Interval: %d seconds\n\nDiagnostics\n  Log level: %s\n\nSettings apply on reconnect. Field names for scripts:\n", cfg.Tun, cfg.LocalPort, cfg.TrafficMode, cfg.TCPProto, cfg.UDPProto, cfg.Transport, cfg.Fingerprint, cfg.Mux, cfg.MTU, cfg.TunDNS, cfg.FakeDNS, cfg.TunName, cfg.TunAddr, cfg.DisableIPv6, cfg.PaddingEnabled, cfg.MinPadding, cfg.MaxPadding, cfg.ChaffingEnabled, cfg.ChaffingInterval, cfg.LogLevel)
-		fmt.Fprintln(c.out, "tun, local, transport, traffic_mode, tcp_proto, udp_proto, fingerprint, mux, mtu, tun_dns, fake_dns, tun_name, tun_addr, tun_ipv6_addr, tun_dns_ipv6, disable_ipv6, padding_enabled, min_padding, max_padding, traffic_padding, chaffing_enabled, chaffing_interval, chaffing_min_bytes, chaffing_max_bytes, log_level")
+		fmt.Fprintf(c.out, "QUIC profile: %s\nRun settings profiles to list browser profiles.\n", cfg.QUICFingerprint)
+		fmt.Fprintln(c.out, "tun, local, transport, traffic_mode, tcp_proto, udp_proto, fingerprint, quic_fingerprint, mux, mtu, tun_dns, fake_dns, tun_name, tun_addr, tun_ipv6_addr, tun_dns_ipv6, disable_ipv6, padding_enabled, min_padding, max_padding, traffic_padding, chaffing_enabled, chaffing_interval, chaffing_min_bytes, chaffing_max_bytes, log_level")
 		return nil
 	}
 	if args[0] == "reset" {
@@ -861,7 +875,7 @@ func (c *clientCLI) settings(args []string) error {
 	}
 	// Catalog settings never contain a profile's credentials.
 	allowed := map[string]bool{}
-	for _, name := range strings.Fields("local tun tun_name tun_addr tun_dns tun_ipv6_addr tun_dns_ipv6 disable_ipv6 transport path mode content_type traffic_mode udp_proto udp_mode tcp_proto mtu mux log_level fake_dns traffic_padding fingerprint padding_enabled min_padding max_padding chaffing_enabled chaffing_interval chaffing_min_bytes chaffing_max_bytes") {
+	for _, name := range strings.Fields("local tun tun_name tun_addr tun_dns tun_ipv6_addr tun_dns_ipv6 disable_ipv6 transport path mode content_type traffic_mode udp_proto udp_mode tcp_proto mtu mux log_level fake_dns traffic_padding fingerprint quic_fingerprint padding_enabled min_padding max_padding chaffing_enabled chaffing_interval chaffing_min_bytes chaffing_max_bytes") {
 		allowed[name] = true
 	}
 	if !allowed[args[1]] {

@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -24,6 +26,8 @@ import (
 const usersApplicationID = 0x41544c55 // ATLU, not a network/wire marker.
 
 type sqliteUserStore struct {
+	persistMu sync.Mutex
+	revision  atomic.Uint64
 	db        *sql.DB
 	lock      *flock.Flock
 	path      string
@@ -258,6 +262,8 @@ func backupLegacyUsers(path string, data []byte) error {
 }
 
 func (s *sqliteUserStore) load(ctx context.Context) (*userDB, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	rows, err := s.db.QueryContext(ctx, `SELECT name,pbk,enabled,up_bytes,down_bytes,total_limit,expires_at,created_at,last_seen,last_ip,note,ip_limit FROM users ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -293,12 +299,32 @@ func (s *sqliteUserStore) load(ctx context.Context) (*userDB, error) {
 	for name, record := range result.Users {
 		s.persisted[name] = *record
 	}
+	s.revision.Add(1)
 	return result, nil
 }
 
-// Caller holds usersMu exclusively, so atomic traffic counters cannot change
-// while a complete point-in-time snapshot is committed. No SQL on packet path.
+// Administrative callers hold usersMu. Statistics use an owned snapshot and
+// saveUnchanged so the database commit never holds the packet-processing lock.
 func (s *sqliteUserStore) save(ctx context.Context, snapshot *userDB, legacyHash string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+	return s.saveSnapshot(ctx, snapshot, legacyHash)
+}
+
+var errUsersSnapshotChanged = errors.New("users changed while statistics were queued")
+
+// The snapshot owns its records. Administrative writers serialize on persistMu
+// and invalidate queued statistics before publishing resets or new credentials.
+func (s *sqliteUserStore) saveUnchanged(ctx context.Context, snapshot *userDB, revision uint64) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+	if s.revision.Load() != revision {
+		return errUsersSnapshotChanged
+	}
+	return s.saveSnapshot(ctx, snapshot, "")
+}
+
+func (s *sqliteUserStore) saveSnapshot(ctx context.Context, snapshot *userDB, legacyHash string) error {
 	if err := validateUserDB(snapshot); err != nil {
 		return err
 	}
@@ -392,10 +418,14 @@ func (s *sqliteUserStore) save(ctx context.Context, snapshot *userDB, legacyHash
 	for name, record := range changed {
 		s.persisted[name] = record
 	}
+	s.revision.Add(1)
 	return nil
 }
 
 func (s *sqliteUserStore) Close() error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+	s.revision.Add(1)
 	err := s.db.Close()
 	unlockErr := s.lock.Close()
 	if err != nil {

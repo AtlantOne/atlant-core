@@ -61,7 +61,37 @@ func TestBrowserClientInteroperatesWithMaintainedServer(t *testing.T) {
 
 func TestBrowserClientBulkTransferOnInitialSizedPath(t *testing.T) {
 	for _, maximum := range []int{1250, 1230} {
-		t.Run(fmt.Sprint(maximum), func(t *testing.T) { testBrowserClientTransfer(t, maximum) })
+		t.Run(fmt.Sprint(maximum), func(t *testing.T) {
+			if maximum == 1230 {
+				requireIPv6UDPLoopback(t)
+			}
+			testBrowserClientTransfer(t, maximum)
+		})
+	}
+}
+
+// Probe plain sockets first: some hosts have ::1 but filter all IPv6 UDP.
+// Such hosts cannot exercise a QUIC IPv6 path at any packet size.
+func requireIPv6UDPLoopback(t *testing.T) {
+	t.Helper()
+	receiver, err := net.ListenPacket("udp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 UDP loopback unavailable: %v", err)
+	}
+	defer receiver.Close()
+	sender, err := net.Dial("udp6", receiver.LocalAddr().String())
+	if err != nil {
+		t.Skipf("IPv6 UDP loopback unavailable: %v", err)
+	}
+	defer sender.Close()
+	_ = sender.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := sender.Write([]byte{0x5a}); err != nil {
+		t.Skipf("plain IPv6 UDP send unavailable: %v", err)
+	}
+	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
+	var packet [1]byte
+	if _, _, err := receiver.ReadFrom(packet[:]); err != nil {
+		t.Skipf("plain IPv6 UDP loopback unavailable: %v", err)
 	}
 }
 

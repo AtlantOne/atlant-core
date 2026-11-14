@@ -28,7 +28,7 @@ func (c *performanceConn) SetDeadline(time.Time) error      { return nil }
 func (c *performanceConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *performanceConn) SetWriteDeadline(time.Time) error { return nil }
 
-func TestPlainTCPRetainsRecordWrites(t *testing.T) {
+func TestPlainTCPBatchesWithoutDelayingSmallWrites(t *testing.T) {
 	raw := &performanceConn{}
 	key, iv := make([]byte, 16), make([]byte, 12)
 	c, err := newRealityConn(raw, 0x1301, key, iv, key, iv, 12, 12)
@@ -38,9 +38,33 @@ func TestPlainTCPRetainsRecordWrites(t *testing.T) {
 	if n, err := c.Write(make([]byte, 32768)); err != nil || n != 32768 {
 		t.Fatalf("write %d %v", n, err)
 	}
-	if raw.writes != 2 {
-		t.Fatalf("plain TCP write policy changed: %d", raw.writes)
+	if raw.writes != 1 {
+		t.Fatalf("bulk TCP records were not batched: %d", raw.writes)
 	}
+	encoded := raw.Bytes()
+	records := 0
+	for len(encoded) > 0 {
+		if len(encoded) < 5 {
+			t.Fatal("truncated record header")
+		}
+		n := 5 + (int(encoded[3])<<8 | int(encoded[4]))
+		if n > len(encoded) {
+			t.Fatal("truncated TLS record")
+		}
+		encoded = encoded[n:]
+		records++
+	}
+	if records != 2 {
+		t.Fatalf("record boundaries changed: %d", records)
+	}
+	decoded := make([]byte, 32768)
+	if _, err := io.ReadFull(c, decoded); err != nil || !bytes.Equal(decoded, make([]byte, 32768)) {
+		t.Fatal("bulk plaintext changed", err)
+	}
+	if n, err := c.Write([]byte("small")); err != nil || n != 5 || raw.writes != 2 {
+		t.Fatal("small request did not flush immediately")
+	}
+
 }
 
 func TestRealityBatchesSocketWritesWithoutChangingRecords(t *testing.T) {

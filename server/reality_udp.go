@@ -749,28 +749,50 @@ func newDemuxPacketConnContext(ctx context.Context, rawConn net.PacketConn, secr
 // extractDCID extracts Destination Connection ID from QUIC packet (RFC 9000):
 // - Long Header: offset 6, length dcil
 // - 1-RTT Short Header: offset 1, 16 bytes
-func extractDCID(p []byte) string {
+func extractDCIDBytes(p []byte) []byte {
 	if len(p) < 5 {
-		return ""
+		return nil
 	}
 	first := p[0]
 	if (first & 0x80) != 0 {
 		// Long Header
 		if len(p) < 6 {
-			return ""
+			return nil
 		}
 		dcil := int(p[5])
 		if dcil > 0 && dcil <= 20 && len(p) >= 6+dcil {
-			return string(p[6 : 6+dcil])
+			return p[6 : 6+dcil]
 		}
 	} else {
 		// 1-RTT Short Header (RFC 9000 17.3)
 		const defaultCIDLen = 16
 		if first&0x40 != 0 && len(p) >= 1+defaultCIDLen {
-			return string(p[1 : 1+defaultCIDLen])
+			return p[1 : 1+defaultCIDLen]
 		}
 	}
-	return ""
+	return nil
+}
+
+func extractDCID(p []byte) string { return string(extractDCIDBytes(p)) }
+
+// The receive buffer is reused by the next read. Look up its CID directly,
+// and only copy it when the stored timestamp needs updating.
+func (m *ShardedAuthMap) refreshPacketCID(key []byte, now time.Time, maxAge time.Duration) bool {
+	shard := m.getShard(string(key))
+	shard.RLock()
+	last, ok := shard.clients[string(key)]
+	shard.RUnlock()
+	if !ok || now.Sub(last) >= maxAge {
+		return false
+	}
+	refreshInterval := maxAge / 4
+	if refreshInterval > time.Second {
+		refreshInterval = time.Second
+	}
+	if now.Sub(last) < refreshInterval {
+		return true
+	}
+	return m.RefreshExisting(string(key), now, maxAge)
 }
 
 func (d *DemuxPacketConn) readLoop() {
@@ -806,9 +828,9 @@ func (d *DemuxPacketConn) readLoop() {
 		// address formatting/map writes on every packet. quic-go validates AEAD
 		// and migration, while quicpeer binds users to the actual TLS exporter.
 		// A known address alone never admits a malformed/CID-less packet.
-		dcidKey := extractDCID(rawPkt)
+		dcidKey := extractDCIDBytes(rawPkt)
 		freshAdmission := d.admission != nil && !d.legacyWire && needsFreshQUICAdmission(rawPkt)
-		if !freshAdmission && dcidKey != "" && d.authCIDs.RefreshExisting(dcidKey, time.Now(), 300*time.Second) {
+		if !freshAdmission && len(dcidKey) != 0 && d.authCIDs.refreshPacketCID(dcidKey, time.Now(), 300*time.Second) {
 			d.dispatchToQUIC(rawPkt, addr)
 			continue
 		}

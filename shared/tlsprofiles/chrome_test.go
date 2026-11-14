@@ -2,6 +2,7 @@ package tlsprofiles
 
 import (
 	"atlant.local/protocol/tlsaudit"
+	"bytes"
 	"crypto/tls"
 	_ "embed"
 	"encoding/binary"
@@ -39,11 +40,18 @@ func TestChrome144MatchesMeasuredBrowser(t *testing.T) {
 		payload := connection.HandshakeState.Hello.Raw
 		record := append([]byte{22, 3, 1, 0, 0}, payload...)
 		binary.BigEndian.PutUint16(record[3:5], uint16(len(payload)))
-		summary, err := tlsaudit.Summarize(record)
+		var wire bytes.Buffer
+		if err := WriteClientHello(&wire, record); err != nil {
+			t.Fatal(err)
+		}
+		summary, err := tlsaudit.Summarize(wire.Bytes())
 		_ = client.Close()
 		_ = peer.Close()
 		if err != nil {
 			t.Fatal(err)
+		}
+		if len(summary.RecordSizes) != len(reference.RecordSizes) {
+			t.Fatalf("TLS record count differs from captured Chrome: reference=%v actual=%v", reference.RecordSizes, summary.RecordSizes)
 		}
 		if reference.StructuralKey() != summary.StructuralKey() || !reflect.DeepEqual(reference.CipherSuites, summary.CipherSuites) {
 			t.Fatalf("profile differs from measured Chrome 144\nreference: %s\nactual: %s", reference.StructuralKey(), summary.StructuralKey())

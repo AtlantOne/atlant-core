@@ -542,7 +542,7 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 			flusher.Flush()
 
 			duplex := newServerDuplexConn(r, w, flusher)
-			handleSpeedtestStream(duplex, user)
+			handleSpeedtestStream(paceInboundStream(duplex, inboundID), user)
 			return
 		}
 
@@ -554,12 +554,13 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 				http.Error(w, "UDP resolve failed: "+err.Error(), http.StatusForbidden)
 				return
 			}
-			uConn, err := net.DialUDP("udp", nil, udpAddr)
+			rawUDP, err := net.DialUDP("udp", nil, udpAddr)
 			if err != nil {
 				log.Printf("[XHTTP-UDP] Dial failed for %s: %v", dest, err)
 				http.Error(w, "UDP dial failed: "+err.Error(), http.StatusBadGateway)
 				return
 			}
+			uConn := paceServerTarget(rawUDP, true, inboundID)
 			defer uConn.Close()
 			if !targets.Attach(uConn) {
 				return
@@ -657,6 +658,7 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 			http.Error(w, "Dial blocked or failed: "+err.Error(), http.StatusForbidden)
 			return
 		}
+		targetConn = paceServerTarget(targetConn, false, inboundID)
 		defer targetConn.Close()
 		if !targets.Attach(targetConn) {
 			return
@@ -708,7 +710,7 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 				if rErr != nil {
 					// Proper TCP Half-Close: client finished sending request.
 					// Send TCP FIN to target without closing Downlink!
-					if tcpConn, ok := targetConn.(*net.TCPConn); ok {
+					if tcpConn, ok := targetConn.(interface{ CloseWrite() error }); ok {
 						_ = tcpConn.CloseWrite()
 					} else {
 						once.Do(closeBoth)

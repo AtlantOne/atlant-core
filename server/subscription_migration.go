@@ -247,6 +247,9 @@ func handleAPISubscriptionMigration(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	store.persistMu.Lock()
+	defer store.persistMu.Unlock()
+	store.revision.Add(1)
 	tx, err := store.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		http.Error(w, "storage unavailable", 503)

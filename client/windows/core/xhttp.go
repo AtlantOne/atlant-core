@@ -162,7 +162,12 @@ func (l *lazyHTTP2Reader) Close() error {
 	return nil
 }
 
-func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
+func dialXHTTPStream(cfg *Config, network, destAddr string) (result net.Conn, err error) {
+	defer func() {
+		if err == nil && result != nil {
+			result = paceClientConn(result, cfg, network == "udp", false)
+		}
+	}()
 	lease, err := getXHTTPTransport(cfg)
 	if err != nil {
 		return nil, err

@@ -74,6 +74,9 @@ func putRemoteAccount(ctx context.Context, store *sqliteUserStore, input remoteA
 		}
 	}
 	name := remoteAccountName(input.Owner, input.Subscription)
+	store.persistMu.Lock()
+	defer store.persistMu.Unlock()
+	store.revision.Add(1)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, 0, err

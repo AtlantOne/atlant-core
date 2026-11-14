@@ -57,6 +57,11 @@ func (s *browserStream) CancelWrite(code quic.StreamErrorCode) {
 
 type browserClient struct{ *browser.Conn }
 
+func (c *browserClient) PoolStats() PoolStats {
+	s := c.Conn.ConnectionStats()
+	return PoolStats{MinimumRTT: s.MinRTT, SmoothedRTT: s.SmoothedRTT}
+}
+
 func (c *browserClient) OpenStreamSync(ctx context.Context) (ClientStream, error) {
 	s, err := c.Conn.OpenStreamSync(ctx)
 	if err != nil {
@@ -97,6 +102,10 @@ type DirectCredentials struct {
 }
 
 func DialClient(ctx context.Context, transport *quic.Transport, addr net.Addr, tlsConfig *tls.Config, config *quic.Config, version int, direct ...DirectCredentials) (ClientConn, io.Closer, error) {
+	return DialClientWithProfile(ctx, transport, addr, tlsConfig, config, version, "chrome_156", direct...)
+}
+
+func DialClientWithProfile(ctx context.Context, transport *quic.Transport, addr net.Addr, tlsConfig *tls.Config, config *quic.Config, version int, profileName string, direct ...DirectCredentials) (ClientConn, io.Closer, error) {
 	if version != 6 && version != 7 {
 		transport.Conn = legacyClientSocket(transport.Conn)
 		conn, err := transport.Dial(ctx, addr, tlsConfig, config)
@@ -110,17 +119,15 @@ func DialClient(ctx context.Context, transport *quic.Transport, addr net.Addr, t
 	if tlsConfig.VerifyConnection != nil {
 		return nil, transport, errors.New("wire6: VerifyConnection is unsupported; use VerifyPeerCertificate")
 	}
-	profile := browser.QUICChrome_146_IPv4
-	if udp, ok := addr.(*net.UDPAddr); ok && udp.IP.To4() == nil && udp.IP.To16() != nil {
-		profile = browser.QUICChrome_146_IPv6
+	ipv6 := false
+	if udp, ok := addr.(*net.UDPAddr); ok {
+		ipv6 = udp.IP.To4() == nil && udp.IP.To16() != nil
 	}
-	spec, err := browser.QUICID2Spec(profile)
+	spec, err := browserSpec(profileName, ipv6)
 	if err != nil {
 		return nil, transport, err
 	}
-	if err := configureChromeFlight(&spec, profile == browser.QUICChrome_146_IPv6); err != nil {
-		return nil, transport, err
-	}
+
 	var admission quicreality.Admission
 	var bound bool
 	if version == 7 {

@@ -51,7 +51,7 @@ type QuicConfig struct {
 	StreamReceiveWindowMB int  `json:"stream_receive_window_mb"` // Maximum; zero selects 32 MiB.
 	ConnReceiveWindowMB   int  `json:"conn_receive_window_mb"`   // Maximum; zero selects 64 MiB.
 	SocketBufferSizeMB    int  `json:"socket_buffer_size_mb"`    // Default: 8 (8MB)
-	DisablePacer          bool `json:"disable_pacer"`            // If true, pacer is disabled completely
+	DisablePacer          bool `json:"disable_pacer"`            // Legacy per-connection pacing option; explicit inbound limits remain enforced.
 }
 
 // YamuxConfig holds multiplexing window and timeout options for Reality TCP tunnels.

@@ -14,6 +14,8 @@ import (
 )
 
 func main() {
+	defer bulkQUICPool.Reset()
+	defer clientBandwidth.Reset()
 	if handleClientCLI(os.Args[1:]) {
 		return
 	}

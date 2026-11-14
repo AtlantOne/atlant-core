@@ -33,6 +33,7 @@ var (
 	sessionDead         bool
 	lastConnectTime     time.Time
 	sessionDialCooldown wire.DialCooldown
+	sessionDialDone     chan struct{}
 	activeServerMu      sync.RWMutex
 	activeServerAddr    string
 )
@@ -122,7 +123,12 @@ func writeAtlantHeader(conn net.Conn, network, addr string, cfg *Config) error {
 	return nil
 }
 
-func dialRemote(cfg *Config, network, addr string) (net.Conn, error) {
+func dialRemote(cfg *Config, network, addr string) (result net.Conn, err error) {
+	defer func() {
+		if err == nil && result != nil {
+			result = clientBandwidth.Wrap(cfg.ServerAddr+"\x00"+cfg.User, cfg.UpMbps, cfg.DownMbps, result, network == "udp", false)
+		}
+	}()
 	// FakeDNS reverse lookup if target is in virtual pool
 	if cfg.FakeDNS && GetFakeDNS() != nil {
 		host, port, err := net.SplitHostPort(addr)
@@ -198,6 +204,12 @@ func dialRealityMux(cfg *Config, network, addr string) (net.Conn, error) {
 func getYamuxSession(cfg *Config) (_ *yamux.Session, err error) {
 	sessMu.Lock()
 	defer sessMu.Unlock()
+	for sessionDialDone != nil {
+		done := sessionDialDone
+		sessMu.Unlock()
+		<-done
+		sessMu.Lock()
+	}
 
 	if session != nil && !session.IsClosed() && !sessionDead {
 		return session, nil
@@ -207,7 +219,12 @@ func getYamuxSession(cfg *Config) (_ *yamux.Session, err error) {
 		return nil, err
 	}
 	defer func() { sessionDialCooldown.Record(err, time.Now()) }()
+	done := make(chan struct{})
+	sessionDialDone = done
+	defer func() { sessionDialDone = nil; close(done) }()
+	sessMu.Unlock()
 	conn, err := dialRealityConn(cfg)
+	sessMu.Lock()
 	if err != nil {
 		return nil, err
 	}
@@ -217,6 +234,8 @@ func getYamuxSession(cfg *Config) (_ *yamux.Session, err error) {
 	yConfig.KeepAliveInterval = 15 * time.Second
 	yConfig.ConnectionWriteTimeout = 10 * time.Second
 	yConfig.StreamOpenTimeout = 10 * time.Second
+	yConfig.MaxStreamWindowSize = 16 * 1024 * 1024
+	yConfig.AcceptBacklog = 1024
 	yConfig.LogOutput = io.Discard
 
 	sess, err := yamux.Client(conn, yConfig)
@@ -407,36 +426,7 @@ func buildClientHelloWithUTLS(serverName string, sessionID []byte, clientEphPub 
 	if len(sessionID) != 32 || len(clientEphPub) != 32 {
 		return nil, fmt.Errorf("invalid REALITY ClientHello authentication fields")
 	}
-	var helloID u.ClientHelloID
-	switch strings.ToLower(strings.TrimSpace(fingerprint)) {
-	case "", "firefox", "firefox_120", "firefox_auto":
-		helloID = u.HelloFirefox_120
-	case "safari", "safari_16", "safari_auto":
-		helloID = u.HelloSafari_16_0
-	case "ios", "ios_14", "ios_13", "iphone":
-		helloID = u.HelloIOS_14
-	case "edge", "edge_106", "edge_85":
-		helloID = u.HelloEdge_106
-	case "android", "okhttp", "android_11":
-		helloID = u.HelloAndroid_11_OkHttp
-	case "360":
-		helloID = u.Hello360_Auto
-	case "qq":
-		helloID = u.HelloQQ_Auto
-	case "randomized", "random":
-		helloID = u.HelloRandomized
-	case "chrome_120":
-		helloID = u.HelloChrome_120
-	case "chrome", "chrome_auto", "chrome_144", "chrome_133":
-		helloID = u.HelloChrome_133
-	default:
-		return nil, fmt.Errorf("unsupported TLS profile %q", fingerprint)
-	}
-
-	spec, err := u.UTLSIdToSpec(helloID)
-	if helloID == u.HelloChrome_133 {
-		spec, err = tlsprofiles.Chrome144Spec()
-	}
+	spec, err := tlsprofiles.Spec(fingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("utls spec failed: %w", err)
 	}
@@ -927,10 +917,7 @@ func (c *realitySecureConn) Write(p []byte) (int, error) {
 	const maxPlaintext = 16384
 	total := 0
 	pending, records := 0, 0
-	batchLimit := 1
-	if c.xhttpBatch {
-		batchLimit = 4
-	}
+	batchLimit := 4 // Batch only bytes already supplied by this Write; never wait.
 	c.recordBuf.ResetBatch()
 	for len(p) > 0 {
 		chunkSize := len(p)

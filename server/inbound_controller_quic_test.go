@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/dns/dnsmessage"
+
 	"github.com/quic-go/quic-go"
 )
 
@@ -21,6 +23,39 @@ func TestInboundControllerQUICMetadataPreservesSessionAndListenerChangesReauthen
 }
 
 func TestInboundControllerQUICUsesConfiguredMicrosoftSNI(t *testing.T) {
+	// Test SNI selection independently of the machine's upstream DNS service.
+	resolver, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resolver.Close() })
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, peer, err := resolver.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			var request dnsmessage.Message
+			if request.Unpack(buf[:n]) != nil {
+				continue
+			}
+			response := dnsmessage.Message{Header: dnsmessage.Header{ID: request.ID, Response: true, RecursionDesired: true, RecursionAvailable: true}, Questions: request.Questions}
+			for _, question := range request.Questions {
+				if question.Name.String() == "www.microsoft.com." && question.Type == dnsmessage.TypeA {
+					response.Answers = append(response.Answers, dnsmessage.Resource{Header: dnsmessage.ResourceHeader{Name: question.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 60}, Body: &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}}})
+				}
+			}
+			if data, err := response.Pack(); err == nil {
+				_, _ = resolver.WriteTo(data, peer)
+			}
+		}
+	}()
+	previous := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "udp", resolver.LocalAddr().String())
+	}}
+	t.Cleanup(func() { net.DefaultResolver = previous })
 	testInboundControllerQUICWithSNI(t, "www.microsoft.com")
 }
 

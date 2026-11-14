@@ -146,7 +146,7 @@ func TestCLISubscriptionURLPolicy(t *testing.T) {
 
 func TestCLISettingsValidationAndSecretIsolation(t *testing.T) {
 	c := newTestCLI(t)
-	for _, args := range [][]string{{"set", "local", "0.0.0.0:1080"}, {"set", "mtu", "1"}, {"set", "fingerprint", "chrome_120"}, {"set", "pbk", "secret"}, {"set", "tun", "nonsense"}} {
+	for _, args := range [][]string{{"set", "local", "0.0.0.0:1080"}, {"set", "mtu", "1"}, {"set", "fingerprint", "chrome_999"}, {"set", "pbk", "secret"}, {"set", "tun", "nonsense"}} {
 		if c.settings(args) == nil {
 			t.Fatalf("invalid setting accepted: %v", args)
 		}
@@ -182,5 +182,29 @@ func TestCLIHelpDoesNotCreateState(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "subscriptions") {
 		t.Fatal("incomplete help")
+	}
+}
+
+func TestCLIBrowserProfilesAndQUICSelection(t *testing.T) {
+	c := newTestCLI(t)
+	for _, profile := range []string{"chrome_120", "chrome_131", "firefox_105", "random_chrome", "random_firefox", "random_browser"} {
+		if err := c.settings([]string{"set", "fingerprint", profile}); err != nil {
+			t.Fatal(profile, err)
+		}
+		if c.state.Settings.Fingerprint != profile {
+			t.Fatal("profile selection was replaced")
+		}
+	}
+	if err := c.settings([]string{"set", "quic_fingerprint", "chrome_146"}); err != nil {
+		t.Fatal(err)
+	}
+	if c.state.Settings.QUICFingerprint != "chrome_146" {
+		t.Fatal("QUIC profile not saved")
+	}
+	if err := c.settings([]string{"set", "quic_fingerprint", "firefox_105"}); err == nil {
+		t.Fatal("TCP profile accepted as QUIC")
+	}
+	if err := c.settings([]string{"profiles"}); err != nil {
+		t.Fatal(err)
 	}
 }

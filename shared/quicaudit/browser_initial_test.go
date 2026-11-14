@@ -132,9 +132,9 @@ func captureBrowserInitial(t *testing.T, address string, version int, passive bo
 	if !reflect.DeepEqual(summary.ClientHello.ALPN, []string{"h3"}) {
 		t.Fatal("ALPN differs")
 	}
-	// Independent reference: quic-fingerprint-conformance corpus/multi_chrome_146,
-	// expected.json, cold handshake conn_key 099f8dea201f93b7. This compares public
-	// fields, not packet timing or an entire browser session.
+	// TLS groups and signature schemes agree with the Chrome 146 corpus and
+	// the fresh Chrome 156 capture. The latter adds trust_anchors and removes
+	// google_initial_rtt. Packet timing is outside this structural comparison.
 	if !reflect.DeepEqual(summary.ClientHello.SupportedGroups, []uint16{4588, 29, 23, 24}) ||
 		!reflect.DeepEqual(summary.ClientHello.SupportedVersions, []uint16{772}) ||
 		!reflect.DeepEqual(summary.ClientHello.SignatureSchemes, []uint16{1027, 2052, 1025, 1283, 2053, 1281, 2054, 1537, 513}) {
@@ -142,11 +142,14 @@ func captureBrowserInitial(t *testing.T, address string, version int, passive bo
 	}
 	extensions := append([]uint16(nil), summary.ClientHello.Extensions...)
 	sort.Slice(extensions, func(i, j int) bool { return extensions[i] < extensions[j] })
-	if !reflect.DeepEqual(extensions, []uint16{0, 10, 13, 16, 27, 43, 45, 51, 57, 17613, 65037}) {
-		t.Fatalf("TLS extensions differ from captured Chrome 146: %v", extensions)
+	if !reflect.DeepEqual(extensions, []uint16{0, 10, 13, 16, 27, 43, 45, 51, 57, 17613, 51764, 65037}) {
+		t.Fatalf("TLS extensions differ from captured Chrome 156: %v", extensions)
 	}
 	limits := map[uint64]uint64{1: 30000, 3: 1472, 4: 15728640, 5: 6291456, 6: 6291456, 7: 6291456, 8: 100, 9: 103}
 	for _, p := range summary.ClientHello.TransportParameters {
+		if p.ID == 0x3127 {
+			t.Fatal("obsolete google_initial_rtt parameter")
+		}
 		if want, ok := limits[p.ID]; ok {
 			if p.Integer == nil || *p.Integer != want {
 				t.Fatalf("transport parameter %d", p.ID)

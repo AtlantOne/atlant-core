@@ -108,10 +108,7 @@ func (c *realitySecureConn) Write(p []byte) (int, error) {
 	const maxFrag = 16384
 	total := 0
 	pending, records := 0, 0
-	batchLimit := 1
-	if c.xhttpBatch {
-		batchLimit = 4
-	}
+	batchLimit := 4 // Batch only bytes already supplied by this Write; never wait.
 	c.recordBuf.ResetBatch()
 	for len(p) > 0 {
 		chunkSize := len(p)
@@ -330,11 +327,18 @@ var (
 	sessionDead         bool
 	lastConnectTime     time.Time
 	sessionDialCooldown wire.DialCooldown
+	sessionDialDone     chan struct{}
+	sessionGeneration   uint64
+	sessionDialCancel   context.CancelFunc
 )
 
 func closeRealitySession() {
 	sessMu.Lock()
 	oldSession := session
+	sessionGeneration++
+	if sessionDialCancel != nil {
+		sessionDialCancel()
+	}
 	session = nil
 	sessionDead = true
 	lastConnectTime = time.Time{}
@@ -428,6 +432,20 @@ func dialRealityMux(cfg *Config, network, addr string) (net.Conn, error) {
 func getYamuxSession(cfg *Config) (_ *yamux.Session, err error) {
 	sessMu.Lock()
 	defer sessMu.Unlock()
+	for sessionDialDone != nil {
+		done := sessionDialDone
+		sessMu.Unlock()
+		select {
+		case <-cfg.context().Done():
+			sessMu.Lock()
+			return nil, cfg.context().Err()
+		case <-done:
+		}
+		sessMu.Lock()
+	}
+	if err := cfg.context().Err(); err != nil {
+		return nil, err
+	}
 
 	if session != nil && !session.IsClosed() && !sessionDead {
 		return session, nil
@@ -436,10 +454,31 @@ func getYamuxSession(cfg *Config) (_ *yamux.Session, err error) {
 	if err := sessionDialCooldown.RetryError(time.Now()); err != nil {
 		return nil, err
 	}
-	defer func() { sessionDialCooldown.Record(err, time.Now()) }()
-	conn, err := dialRealityConn(cfg)
+	done := make(chan struct{})
+	sessionDialDone = done
+	generation := sessionGeneration
+	ctx, cancel := context.WithCancel(cfg.context())
+	sessionDialCancel = cancel
+	defer cancel()
+	defer func() {
+		if generation == sessionGeneration {
+			sessionDialCooldown.Record(err, time.Now())
+		}
+		sessionDialDone = nil
+		sessionDialCancel = nil
+		close(done)
+	}()
+	dialConfig := *cfg
+	dialConfig.runCtx = ctx
+	sessMu.Unlock()
+	conn, err := dialRealityConn(&dialConfig)
+	sessMu.Lock()
 	if err != nil {
 		return nil, err
+	}
+	if generation != sessionGeneration || ctx.Err() != nil {
+		conn.Close()
+		return nil, context.Canceled
 	}
 
 	yConfig := yamux.DefaultConfig()
@@ -447,6 +486,8 @@ func getYamuxSession(cfg *Config) (_ *yamux.Session, err error) {
 	yConfig.KeepAliveInterval = 15 * time.Second
 	yConfig.ConnectionWriteTimeout = 10 * time.Second
 	yConfig.StreamOpenTimeout = 10 * time.Second
+	yConfig.MaxStreamWindowSize = 16 * 1024 * 1024
+	yConfig.AcceptBacklog = 1024
 	yConfig.LogOutput = io.Discard
 
 	sess, err := yamux.Client(conn, yConfig)
@@ -623,36 +664,7 @@ func buildClientHelloWithUTLS(serverName string, sessionID []byte, clientEphPub 
 	if len(sessionID) != 32 || len(clientEphPub) != 32 {
 		return nil, fmt.Errorf("invalid REALITY ClientHello authentication fields")
 	}
-	var helloID u.ClientHelloID
-	switch strings.ToLower(strings.TrimSpace(fingerprint)) {
-	case "", "firefox", "firefox_120", "firefox_auto":
-		helloID = u.HelloFirefox_120
-	case "safari", "safari_16", "safari_auto":
-		helloID = u.HelloSafari_16_0
-	case "ios", "ios_14", "ios_13", "iphone":
-		helloID = u.HelloIOS_14
-	case "edge", "edge_106", "edge_85":
-		helloID = u.HelloEdge_106
-	case "android", "okhttp", "android_11":
-		helloID = u.HelloAndroid_11_OkHttp
-	case "360":
-		helloID = u.Hello360_Auto
-	case "qq":
-		helloID = u.HelloQQ_Auto
-	case "randomized", "random":
-		helloID = u.HelloRandomized
-	case "chrome_120":
-		helloID = u.HelloChrome_120
-	case "chrome", "chrome_auto", "chrome_144", "chrome_133":
-		helloID = u.HelloChrome_133
-	default:
-		return nil, fmt.Errorf("unsupported TLS profile %q", fingerprint)
-	}
-
-	spec, err := u.UTLSIdToSpec(helloID)
-	if helloID == u.HelloChrome_133 {
-		spec, err = tlsprofiles.Chrome144Spec()
-	}
+	spec, err := tlsprofiles.Spec(fingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("utls spec failed: %w", err)
 	}

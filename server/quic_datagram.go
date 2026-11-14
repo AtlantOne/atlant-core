@@ -21,13 +21,13 @@ type udpDatagramFlow struct {
 	active atomic.Int64
 }
 
-func relayQUICDatagrams(ctx context.Context, conn *quic.Conn, pacer *BrutalPacer, user string) {
-	relayDatagramFlows(ctx, conn.ReceiveDatagram, conn.SendDatagram, pacer, user, safeResolveUDPContext)
+func relayQUICDatagrams(ctx context.Context, conn *quic.Conn, pacer *BrutalPacer, user string, budgetID ...string) {
+	relayDatagramFlows(ctx, conn.ReceiveDatagram, conn.SendDatagram, pacer, user, safeResolveUDPContext, budgetID...)
 }
 
 // Each destination owns its socket and a bounded queue. Resolution and writes
 // cannot block reception for another flow on the same authenticated carrier.
-func relayDatagramFlows(ctx context.Context, receive func(context.Context) ([]byte, error), send func([]byte) error, pacer *BrutalPacer, user string, resolve func(context.Context, string) (*net.UDPAddr, error)) {
+func relayDatagramFlows(ctx context.Context, receive func(context.Context) ([]byte, error), send func([]byte) error, pacer *BrutalPacer, user string, resolve func(context.Context, string) (*net.UDPAddr, error), budgetID ...string) {
 	ctx, cancel := context.WithCancel(ctx)
 	var mu sync.Mutex
 	var workers sync.WaitGroup
@@ -106,14 +106,15 @@ func relayDatagramFlows(ctx context.Context, receive func(context.Context) ([]by
 				if flow.ctx.Err() != nil {
 					return
 				}
-				socket, err := net.DialUDP("udp", nil, address)
+				rawUDP, err := net.DialUDP("udp", nil, address)
 				if err != nil {
 					log.Printf("[QUIC-DGRAM] UDP dial failed for %s: %v", target, err)
 					return
 				}
+				_ = rawUDP.SetReadBuffer(256 * 1024)
+				_ = rawUDP.SetWriteBuffer(256 * 1024)
+				socket := paceServerTarget(rawUDP, true, budgetID...)
 				defer socket.Close()
-				_ = socket.SetReadBuffer(256 * 1024)
-				_ = socket.SetWriteBuffer(256 * 1024)
 				readerDone := make(chan struct{})
 				go func() {
 					defer close(readerDone)

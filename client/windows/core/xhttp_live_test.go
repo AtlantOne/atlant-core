@@ -25,6 +25,9 @@ func liveEnvironmentConfig() (*Config, error) {
 	if cfg.ServerAddr == "" || cfg.PBK == "" || cfg.User == "" || cfg.ServerPubKey == "" {
 		return nil, fmt.Errorf("live environment profile requires server, PBK, user and pinned server public key")
 	}
+	if value := os.Getenv("ATLANT_TEST_QUIC_FINGERPRINT"); value != "" {
+		cfg.QUICFingerprint = value
+	}
 	if value := os.Getenv("ATLANT_TEST_FINGERPRINT"); value != "" {
 		cfg.Fingerprint = value
 	}

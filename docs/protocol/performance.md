@@ -39,10 +39,8 @@ local regression tests do not prove immunity to every bypass or DPI classifier.
 
 ## TCP and XHTTP application writes
 
-For XHTTP only, REALITY application writers on Android, Linux, Windows and the
-server may seal up to four existing TLS records into one socket write. Plain
-TCP retains the previous per-record write policy: the broad batching experiment
-did not establish a throughput gain and is not enabled for that transport.
+REALITY application writers on Android, Linux, Windows and the server may
+seal up to four existing TLS records into one socket write for TCP and XHTTP.
 Record sizes, sequence
 numbers, AEAD, key-usage checks and the existing padding policy are unchanged.
 Batching never waits for another application Write: small requests flush
@@ -80,8 +78,41 @@ Four bulk flows are distributed across them. This is diagnostic, not a shipped
 connection pool. CPU/RSS includes all four clients; one-flow rows still have
 three idle clients. Compare separate result files and retain this metadata.
 
-The default remains one process / one shared connection. More connections are
-not adopted automatically: they add state, sockets and observable handshakes.
+The production wire7 client uses one process with an adaptive bulk pool. It
+opens carriers on concurrent demand, normally up to four, and keeps UDP/DNS on
+the separate primary carrier. Existing streams stay on their original carrier.
+At the limit, assignment considers active streams, pending bytes and write
+wait; measured RTT growth stops further expansion beyond two bulk lanes.
+Idle bulk carriers close after a randomized 45–90 seconds. Profile changes,
+Android session cancellation and explicit shutdown retire the pool. A failed
+carrier's cooldown never takes precedence over a healthy busy carrier.
+
+`quic_parallel_connections` selects the bulk limit on Windows/Linux (zero
+selects four, maximum eight). Each extra carrier adds a socket, congestion
+window and authenticated handshake. This option controls workload isolation;
+it is not a DPI protection setting. The diagnostic multi-process mode above
+remains separate from this production pool.
+
+## Aggregate rate limits
+
+Configured inbound upload/download limits are shared by TCP, XHTTP and all
+QUIC carriers, including the in-tunnel speed test. Windows/Linux client limits
+are shared across their transports too. Opening more connections does not
+multiply these budgets. Zero is unlimited and creates no limiter worker.
+The legacy QUIC `disable_pacer` option does not bypass an explicit inbound
+rate limit.
+
+The scheduler rotates short byte quanta between waiting flows. Sparse UDP
+receives priority; sustained UDP loses that priority, and bulk receives a
+turn after at most eight priority quanta. Cancellation and updated deadlines
+interrupt queued waits. UDP datagrams are never split or truncated by pacing.
+This application budget is separate from QUIC congestion control and does
+not estimate an unknown access-link rate.
+
+An isolated BBR trial on a 20 Mbps / 50 ms / 1% loss-per-direction channel
+increased throughput but worsened loaded latency relative to the adaptive
+Reno pool. BBR is therefore not enabled in production. Its build overlay and
+raw trial results remain under private development artifacts.
 
 ## UDP counters and buffers
 

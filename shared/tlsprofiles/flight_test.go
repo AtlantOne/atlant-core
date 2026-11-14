@@ -61,15 +61,15 @@ func helloRecord(size int) []byte {
 	return record
 }
 
-func TestHelloFramingPreservesExactTranscriptAndSmallRecords(t *testing.T) {
+func TestHelloFramingPreservesBrowserRecordAndTranscript(t *testing.T) {
 	for _, size := range []int{537, 1024, 1025, 1791, 4096, 16384} {
 		source := helloRecord(size)
 		writer := &partialHelloWriter{limit: 17}
 		if err := WriteClientHello(writer, source); err != nil {
 			t.Fatal(err)
 		}
-		if size <= 1024 && !bytes.Equal(source, writer.Bytes()) {
-			t.Fatal("small ClientHello was changed")
+		if !bytes.Equal(source, writer.Bytes()) {
+			t.Fatal("ClientHello record was changed")
 		}
 		var payload []byte
 		records := 0
@@ -78,7 +78,7 @@ func TestHelloFramingPreservesExactTranscriptAndSmallRecords(t *testing.T) {
 				t.Fatal("truncated record")
 			}
 			n := int(binary.BigEndian.Uint16(wire[3:5]))
-			if n > 1024 || n == 0 || len(wire) < 5+n || !bytes.Equal(wire[:3], source[:3]) {
+			if n == 0 || len(wire) < 5+n || !bytes.Equal(wire[:3], source[:3]) {
 				t.Fatal("bad record framing")
 			}
 			payload = append(payload, wire[5:5+n]...)
@@ -87,7 +87,7 @@ func TestHelloFramingPreservesExactTranscriptAndSmallRecords(t *testing.T) {
 		if !bytes.Equal(payload, source[5:]) {
 			t.Fatal("TLS transcript changed")
 		}
-		if records != (size+1023)/1024 {
+		if records != 1 {
 			t.Fatal("unexpected fragment count")
 		}
 	}
