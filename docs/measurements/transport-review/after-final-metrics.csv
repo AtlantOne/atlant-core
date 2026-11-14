@@ -1,0 +1,7 @@
+protocol,direction,phase,duration_s,packets,tcp_packets,udp_packets,tcp_syn,new_tcp_flows,tcp_reset,tcp_ack_only,over_link_mtu,flows,payload_packets,up_ip_bytes,down_ip_bytes,payload_packet_ip_size_p50,payload_packet_ip_size_p95,data_gap_p50_ms,data_gap_p95_ms
+atlant-xhttp,D,idle,25.024,6,6,0,0,0,0,4,0,1,2,332,170,118,176,53.272,53.272
+atlant-xhttp,D,resume,0.991,87,87,0,4,4,0,24,0,5,55,9272,12049,216,1332,1.079,60.122
+atlant-xhttp,D,load,10.042,14650,14650,0,0,0,0,4815,0,5,9835,376125,13640152,1500,1500,0.604,3.904
+atlant-xhttp,U,idle,25.021,6,6,0,0,0,0,4,0,1,2,293,163,111,137,46.05,46.05
+atlant-xhttp,U,resume,0.948,84,84,0,4,4,0,22,0,5,54,9039,12167,221,1331,0.923,58.381
+atlant-xhttp,U,load,10.011,16418,16418,0,0,0,0,4979,0,5,11439,14322182,537880,1500,1500,0.016,4.854

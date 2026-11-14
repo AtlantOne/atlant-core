@@ -1,0 +1,50 @@
+[
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "idle-start",
+    "offset_ns": 0
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "idle-end",
+    "offset_ns": 130105463271
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "load-start",
+    "offset_ns": 130176649161
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "load-end",
+    "offset_ns": 136203679823
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "idle-start",
+    "offset_ns": 137380456185
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "idle-end",
+    "offset_ns": 267482743498
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "load-start",
+    "offset_ns": 267535965012
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "load-end",
+    "offset_ns": 273547676264
+  }
+]

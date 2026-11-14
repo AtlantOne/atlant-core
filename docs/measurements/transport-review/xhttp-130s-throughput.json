@@ -1,0 +1,464 @@
+{
+  "scenario": {
+    "name": "clean",
+    "one_way_delay_ms": 0,
+    "one_way_jitter_ms": 0,
+    "loss_percent_per_direction": 0,
+    "rate_mbps_per_direction": 20,
+    "queue_limit_packets": 256,
+    "blackout_two_seconds": false,
+    "block_udp": false
+  },
+  "results": [
+    {
+      "protocol": "atlant-xhttp",
+      "direction": "D",
+      "round": 1,
+      "bulk_streams": 1,
+      "cold_first_response_ms": 71.796389,
+      "unloaded_rtt_p50_ms": 2.129999,
+      "loaded_rtt_p50_ms": 17.474698,
+      "loaded_rtt_p95_ms": 19.463817,
+      "loaded_rtt_p99_ms": 20.642819,
+      "crc_verified_bytes": 12976128,
+      "seconds": 6.00238714,
+      "mbps": 17.294623218854895,
+      "average_process_cpu_cores": 0.3381987786945712,
+      "ping_timeouts": 0,
+      "first_fresh_echo_after_restore_ms": 0,
+      "same_connection_recovered": false,
+      "error_count": 0,
+      "loaded_pings": [
+        {
+          "sent_ms_after_load_start": 3.376,
+          "rtt_ms": 2.531399
+        },
+        {
+          "sent_ms_after_load_start": 106.390985,
+          "rtt_ms": 1.8732
+        },
+        {
+          "sent_ms_after_load_start": 209.345971,
+          "rtt_ms": 18.447597
+        },
+        {
+          "sent_ms_after_load_start": 328.929254,
+          "rtt_ms": 16.118198
+        },
+        {
+          "sent_ms_after_load_start": 446.079438,
+          "rtt_ms": 17.068798
+        },
+        {
+          "sent_ms_after_load_start": 563.764922,
+          "rtt_ms": 18.192597
+        },
+        {
+          "sent_ms_after_load_start": 682.421005,
+          "rtt_ms": 18.050597
+        },
+        {
+          "sent_ms_after_load_start": 800.911588,
+          "rtt_ms": 18.051898
+        },
+        {
+          "sent_ms_after_load_start": 919.297372,
+          "rtt_ms": 17.149598
+        },
+        {
+          "sent_ms_after_load_start": 1036.857156,
+          "rtt_ms": 17.248897
+        },
+        {
+          "sent_ms_after_load_start": 1154.652939,
+          "rtt_ms": 17.098598
+        },
+        {
+          "sent_ms_after_load_start": 1271.814023,
+          "rtt_ms": 17.056897
+        },
+        {
+          "sent_ms_after_load_start": 1389.515306,
+          "rtt_ms": 17.120798
+        },
+        {
+          "sent_ms_after_load_start": 1507.17669,
+          "rtt_ms": 17.119398
+        },
+        {
+          "sent_ms_after_load_start": 1624.761374,
+          "rtt_ms": 17.094397
+        },
+        {
+          "sent_ms_after_load_start": 1742.572957,
+          "rtt_ms": 17.073898
+        },
+        {
+          "sent_ms_after_load_start": 1860.205341,
+          "rtt_ms": 17.018997
+        },
+        {
+          "sent_ms_after_load_start": 1977.612324,
+          "rtt_ms": 17.272898
+        },
+        {
+          "sent_ms_after_load_start": 2095.793108,
+          "rtt_ms": 17.220797
+        },
+        {
+          "sent_ms_after_load_start": 2213.101492,
+          "rtt_ms": 18.271397
+        },
+        {
+          "sent_ms_after_load_start": 2332.112275,
+          "rtt_ms": 18.119397
+        },
+        {
+          "sent_ms_after_load_start": 2451.312458,
+          "rtt_ms": 17.271298
+        },
+        {
+          "sent_ms_after_load_start": 2568.910242,
+          "rtt_ms": 17.305497
+        },
+        {
+          "sent_ms_after_load_start": 2686.628725,
+          "rtt_ms": 17.140298
+        },
+        {
+          "sent_ms_after_load_start": 2804.631009,
+          "rtt_ms": 17.474698
+        },
+        {
+          "sent_ms_after_load_start": 2922.579393,
+          "rtt_ms": 19.221697
+        },
+        {
+          "sent_ms_after_load_start": 3042.553376,
+          "rtt_ms": 19.273597
+        },
+        {
+          "sent_ms_after_load_start": 3162.750359,
+          "rtt_ms": 18.447297
+        },
+        {
+          "sent_ms_after_load_start": 3281.635842,
+          "rtt_ms": 19.369398
+        },
+        {
+          "sent_ms_after_load_start": 3401.174726,
+          "rtt_ms": 18.962597
+        },
+        {
+          "sent_ms_after_load_start": 3520.532109,
+          "rtt_ms": 19.472697
+        },
+        {
+          "sent_ms_after_load_start": 3641.104192,
+          "rtt_ms": 18.416598
+        },
+        {
+          "sent_ms_after_load_start": 3760.391776,
+          "rtt_ms": 18.339797
+        },
+        {
+          "sent_ms_after_load_start": 3885.297829,
+          "rtt_ms": 12.845812
+        },
+        {
+          "sent_ms_after_load_start": 3999.213332,
+          "rtt_ms": 18.104416
+        },
+        {
+          "sent_ms_after_load_start": 4118.256239,
+          "rtt_ms": 20.642819
+        },
+        {
+          "sent_ms_after_load_start": 4239.400249,
+          "rtt_ms": 11.08871
+        },
+        {
+          "sent_ms_after_load_start": 4350.612149,
+          "rtt_ms": 19.168617
+        },
+        {
+          "sent_ms_after_load_start": 4470.863857,
+          "rtt_ms": 17.189316
+        },
+        {
+          "sent_ms_after_load_start": 4588.584364,
+          "rtt_ms": 19.463817
+        },
+        {
+          "sent_ms_after_load_start": 4708.158572,
+          "rtt_ms": 18.415816
+        },
+        {
+          "sent_ms_after_load_start": 4827.423379,
+          "rtt_ms": 17.243716
+        },
+        {
+          "sent_ms_after_load_start": 4944.869885,
+          "rtt_ms": 18.557417
+        },
+        {
+          "sent_ms_after_load_start": 5064.526193,
+          "rtt_ms": 18.240217
+        },
+        {
+          "sent_ms_after_load_start": 5183.785901,
+          "rtt_ms": 18.090816
+        },
+        {
+          "sent_ms_after_load_start": 5302.584808,
+          "rtt_ms": 17.105815
+        },
+        {
+          "sent_ms_after_load_start": 5420.607914,
+          "rtt_ms": 18.242317
+        },
+        {
+          "sent_ms_after_load_start": 5539.465622,
+          "rtt_ms": 17.159715
+        },
+        {
+          "sent_ms_after_load_start": 5657.464828,
+          "rtt_ms": 17.044416
+        },
+        {
+          "sent_ms_after_load_start": 5775.008834,
+          "rtt_ms": 18.320717
+        },
+        {
+          "sent_ms_after_load_start": 5894.049842,
+          "rtt_ms": 18.803017
+        }
+      ]
+    },
+    {
+      "protocol": "atlant-xhttp",
+      "direction": "U",
+      "round": 1,
+      "bulk_streams": 1,
+      "cold_first_response_ms": 33.085629,
+      "unloaded_rtt_p50_ms": 2.101102,
+      "loaded_rtt_p50_ms": 17.729701,
+      "loaded_rtt_p95_ms": 21.821406,
+      "loaded_rtt_p99_ms": 27.732201,
+      "crc_verified_bytes": 12779520,
+      "seconds": 6.000779652,
+      "mbps": 17.037146159153785,
+      "average_process_cpu_cores": 0.48160408606851474,
+      "ping_timeouts": 0,
+      "first_fresh_echo_after_restore_ms": 0,
+      "same_connection_recovered": false,
+      "error_count": 0,
+      "loaded_pings": [
+        {
+          "sent_ms_after_load_start": 4.365401,
+          "rtt_ms": 2.4373
+        },
+        {
+          "sent_ms_after_load_start": 107.534428,
+          "rtt_ms": 10.410303
+        },
+        {
+          "sent_ms_after_load_start": 218.559158,
+          "rtt_ms": 16.474204
+        },
+        {
+          "sent_ms_after_load_start": 335.407689,
+          "rtt_ms": 17.512204
+        },
+        {
+          "sent_ms_after_load_start": 453.62972,
+          "rtt_ms": 17.269804
+        },
+        {
+          "sent_ms_after_load_start": 572.078551,
+          "rtt_ms": 18.351705
+        },
+        {
+          "sent_ms_after_load_start": 691.476483,
+          "rtt_ms": 16.378204
+        },
+        {
+          "sent_ms_after_load_start": 808.007614,
+          "rtt_ms": 17.542404
+        },
+        {
+          "sent_ms_after_load_start": 926.404145,
+          "rtt_ms": 18.044505
+        },
+        {
+          "sent_ms_after_load_start": 1044.744676,
+          "rtt_ms": 21.656706
+        },
+        {
+          "sent_ms_after_load_start": 1166.976809,
+          "rtt_ms": 20.383905
+        },
+        {
+          "sent_ms_after_load_start": 1287.832041,
+          "rtt_ms": 8.178602
+        },
+        {
+          "sent_ms_after_load_start": 1396.18327,
+          "rtt_ms": 19.857405
+        },
+        {
+          "sent_ms_after_load_start": 1517.178002,
+          "rtt_ms": 18.418905
+        },
+        {
+          "sent_ms_after_load_start": 1635.749233,
+          "rtt_ms": 19.995005
+        },
+        {
+          "sent_ms_after_load_start": 1755.866965,
+          "rtt_ms": 21.821406
+        },
+        {
+          "sent_ms_after_load_start": 1878.536881,
+          "rtt_ms": 15.184101
+        },
+        {
+          "sent_ms_after_load_start": 1994.778386,
+          "rtt_ms": 18.7081
+        },
+        {
+          "sent_ms_after_load_start": 2114.65629,
+          "rtt_ms": 17.678001
+        },
+        {
+          "sent_ms_after_load_start": 2232.849195,
+          "rtt_ms": 18.631701
+        },
+        {
+          "sent_ms_after_load_start": 2352.163999,
+          "rtt_ms": 8.646101
+        },
+        {
+          "sent_ms_after_load_start": 2461.208204,
+          "rtt_ms": 27.732201
+        },
+        {
+          "sent_ms_after_load_start": 2589.009709,
+          "rtt_ms": 15.8764
+        },
+        {
+          "sent_ms_after_load_start": 2705.557813,
+          "rtt_ms": 9.0226
+        },
+        {
+          "sent_ms_after_load_start": 2814.638917,
+          "rtt_ms": 21.997801
+        },
+        {
+          "sent_ms_after_load_start": 2937.612622,
+          "rtt_ms": 17.748501
+        },
+        {
+          "sent_ms_after_load_start": 3055.459627,
+          "rtt_ms": 19.9889
+        },
+        {
+          "sent_ms_after_load_start": 3175.946132,
+          "rtt_ms": 18.275
+        },
+        {
+          "sent_ms_after_load_start": 3294.317637,
+          "rtt_ms": 16.637
+        },
+        {
+          "sent_ms_after_load_start": 3411.052842,
+          "rtt_ms": 18.7245
+        },
+        {
+          "sent_ms_after_load_start": 3530.488747,
+          "rtt_ms": 17.5434
+        },
+        {
+          "sent_ms_after_load_start": 3648.517852,
+          "rtt_ms": 17.7529
+        },
+        {
+          "sent_ms_after_load_start": 3767.144857,
+          "rtt_ms": 16.7535
+        },
+        {
+          "sent_ms_after_load_start": 3885.146662,
+          "rtt_ms": 17.6374
+        },
+        {
+          "sent_ms_after_load_start": 4003.898667,
+          "rtt_ms": 17.4999
+        },
+        {
+          "sent_ms_after_load_start": 4122.222872,
+          "rtt_ms": 18.653001
+        },
+        {
+          "sent_ms_after_load_start": 4241.524377,
+          "rtt_ms": 16.715501
+        },
+        {
+          "sent_ms_after_load_start": 4359.334382,
+          "rtt_ms": 16.529901
+        },
+        {
+          "sent_ms_after_load_start": 4476.699487,
+          "rtt_ms": 17.729701
+        },
+        {
+          "sent_ms_after_load_start": 4595.321892,
+          "rtt_ms": 18.171801
+        },
+        {
+          "sent_ms_after_load_start": 4713.958897,
+          "rtt_ms": 16.553101
+        },
+        {
+          "sent_ms_after_load_start": 4830.597102,
+          "rtt_ms": 17.777901
+        },
+        {
+          "sent_ms_after_load_start": 4948.741407,
+          "rtt_ms": 17.791101
+        },
+        {
+          "sent_ms_after_load_start": 5067.365812,
+          "rtt_ms": 16.297701
+        },
+        {
+          "sent_ms_after_load_start": 5184.312817,
+          "rtt_ms": 17.717501
+        },
+        {
+          "sent_ms_after_load_start": 5302.107422,
+          "rtt_ms": 17.731201
+        },
+        {
+          "sent_ms_after_load_start": 5420.634327,
+          "rtt_ms": 17.860601
+        },
+        {
+          "sent_ms_after_load_start": 5539.291432,
+          "rtt_ms": 17.873001
+        },
+        {
+          "sent_ms_after_load_start": 5657.827937,
+          "rtt_ms": 17.509901
+        },
+        {
+          "sent_ms_after_load_start": 5776.014042,
+          "rtt_ms": 17.538401
+        },
+        {
+          "sent_ms_after_load_start": 5893.877347,
+          "rtt_ms": 18.676901
+        }
+      ]
+    }
+  ]
+}

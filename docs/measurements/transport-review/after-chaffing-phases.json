@@ -1,0 +1,146 @@
+[
+  {
+    "protocol": "atlant-reality",
+    "direction": "D",
+    "event": "idle-start",
+    "offset_ns": 0
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "D",
+    "event": "idle-end",
+    "offset_ns": 25019072709
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "D",
+    "event": "load-start",
+    "offset_ns": 25771779288
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "D",
+    "event": "load-end",
+    "offset_ns": 35794081801
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "U",
+    "event": "idle-start",
+    "offset_ns": 37474230450
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "U",
+    "event": "idle-end",
+    "offset_ns": 62550853114
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "U",
+    "event": "load-start",
+    "offset_ns": 63274178315
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "U",
+    "event": "load-end",
+    "offset_ns": 73296225041
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "idle-start",
+    "offset_ns": 74915144277
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "idle-end",
+    "offset_ns": 99935901520
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "load-start",
+    "offset_ns": 100887703555
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "load-end",
+    "offset_ns": 110899084820
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "idle-start",
+    "offset_ns": 112503734445
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "idle-end",
+    "offset_ns": 137525021772
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "load-start",
+    "offset_ns": 138465971322
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "load-end",
+    "offset_ns": 148486898324
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "D",
+    "event": "idle-start",
+    "offset_ns": 150329027453
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "D",
+    "event": "idle-end",
+    "offset_ns": 175350059991
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "D",
+    "event": "load-start",
+    "offset_ns": 176308500566
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "D",
+    "event": "load-end",
+    "offset_ns": 186326191218
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "U",
+    "event": "idle-start",
+    "offset_ns": 192556325849
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "U",
+    "event": "idle-end",
+    "offset_ns": 217576798516
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "U",
+    "event": "load-start",
+    "offset_ns": 218395706414
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "U",
+    "event": "load-end",
+    "offset_ns": 228407440848
+  }
+]

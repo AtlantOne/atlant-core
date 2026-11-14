@@ -1,0 +1,146 @@
+[
+  {
+    "protocol": "atlant-reality",
+    "direction": "D",
+    "event": "idle-start",
+    "offset_ns": 0
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "D",
+    "event": "idle-end",
+    "offset_ns": 25023398799
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "D",
+    "event": "load-start",
+    "offset_ns": 25842589661
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "D",
+    "event": "load-end",
+    "offset_ns": 35912120243
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "U",
+    "event": "idle-start",
+    "offset_ns": 38878488701
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "U",
+    "event": "idle-end",
+    "offset_ns": 63901093081
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "U",
+    "event": "load-start",
+    "offset_ns": 64656567737
+  },
+  {
+    "protocol": "atlant-reality",
+    "direction": "U",
+    "event": "load-end",
+    "offset_ns": 74743257173
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "idle-start",
+    "offset_ns": 83592224331
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "idle-end",
+    "offset_ns": 108613421485
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "load-start",
+    "offset_ns": 109574138343
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "D",
+    "event": "load-end",
+    "offset_ns": 119616592030
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "idle-start",
+    "offset_ns": 122408391160
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "idle-end",
+    "offset_ns": 147487300690
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "load-start",
+    "offset_ns": 148480623341
+  },
+  {
+    "protocol": "atlant-xhttp",
+    "direction": "U",
+    "event": "load-end",
+    "offset_ns": 158534178054
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "D",
+    "event": "idle-start",
+    "offset_ns": 161103538483
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "D",
+    "event": "idle-end",
+    "offset_ns": 186125027856
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "D",
+    "event": "load-start",
+    "offset_ns": 187576701520
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "D",
+    "event": "load-end",
+    "offset_ns": 197602757756
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "U",
+    "event": "idle-start",
+    "offset_ns": 199804605140
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "U",
+    "event": "idle-end",
+    "offset_ns": 224827351173
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "U",
+    "event": "load-start",
+    "offset_ns": 226122408772
+  },
+  {
+    "protocol": "atlant-quic",
+    "direction": "U",
+    "event": "load-end",
+    "offset_ns": 236242755368
+  }
+]
