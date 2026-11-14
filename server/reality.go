@@ -275,11 +275,12 @@ func buildServerHello(serverRandom []byte, sessionID []byte, cipherSuite uint16,
 }
 
 type realitySecureConn struct {
-	readHeader [5]byte
-	readNonce  [12]byte
-	recordBuf  wire.TLSRecordBuffer
-	writeErr   error
-	decBuf     []byte
+	readHeader   [5]byte
+	recordReader wire.TLSRecordReader
+	readNonce    [12]byte
+	recordBuf    wire.TLSRecordBuffer
+	writeErr     error
+	decBuf       []byte
 	net.Conn
 	encCipher          cipher.AEAD
 	decCipher          cipher.AEAD
@@ -402,7 +403,7 @@ func (c *realitySecureConn) Read(p []byte) (int, error) {
 	}
 
 	header := &c.readHeader
-	if _, err := io.ReadFull(c.Conn, header[:]); err != nil {
+	if _, err := c.recordReader.ReadFull(c.Conn, header[:]); err != nil {
 		return 0, err
 	}
 
@@ -419,7 +420,7 @@ func (c *realitySecureConn) Read(p []byte) (int, error) {
 		c.decBuf = make([]byte, recLen)
 	}
 	cipherBuf := c.decBuf[:recLen]
-	if _, err := io.ReadFull(c.Conn, cipherBuf); err != nil {
+	if _, err := c.recordReader.ReadFull(c.Conn, cipherBuf); err != nil {
 		return 0, err
 	}
 

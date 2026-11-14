@@ -170,7 +170,7 @@ func (c *realitySecureConn) Read(p []byte) (int, error) {
 		}
 
 		hdr := &c.readHeader
-		if _, err := io.ReadFull(c.Conn, hdr[:]); err != nil {
+		if _, err := c.recordReader.ReadFull(c.Conn, hdr[:]); err != nil {
 			return 0, err
 		}
 		if hdr[0] != 0x17 {
@@ -185,7 +185,7 @@ func (c *realitySecureConn) Read(p []byte) (int, error) {
 			c.decBuf = make([]byte, recLen)
 		}
 		cipherSlice := c.decBuf[:recLen]
-		if _, err := io.ReadFull(c.Conn, cipherSlice); err != nil {
+		if _, err := c.recordReader.ReadFull(c.Conn, cipherSlice); err != nil {
 			return 0, err
 		}
 

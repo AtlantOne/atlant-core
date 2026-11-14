@@ -703,7 +703,7 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 						once.Do(closeBoth)
 						return
 					}
-					if _, wErr := targetConn.Write(buf[:n]); wErr != nil {
+					if wErr := writeFull(targetConn, buf[:n]); wErr != nil {
 						once.Do(closeBoth)
 						return
 					}

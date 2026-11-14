@@ -4,6 +4,7 @@
 package atlant
 
 import (
+	"atlant.local/protocol/wire"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -194,12 +195,13 @@ func makeTLS13Nonce(baseIV [12]byte, seq uint64) []byte {
 }
 
 type realitySecureConn struct {
-	readHeader  [5]byte
-	readNonce   [12]byte
-	recordBuf   tlsRecordBuffer
-	xhttpBatch  bool
-	writeErr    error
-	writeClosed bool
+	readHeader   [5]byte
+	recordReader wire.TLSRecordReader
+	readNonce    [12]byte
+	recordBuf    tlsRecordBuffer
+	xhttpBatch   bool
+	writeErr     error
+	writeClosed  bool
 	net.Conn
 	encAead cipher.AEAD
 	decAead cipher.AEAD

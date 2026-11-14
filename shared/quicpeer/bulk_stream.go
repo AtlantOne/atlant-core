@@ -31,14 +31,20 @@ func (s *BulkStream) Write(p []byte) (int, error) {
 	written := 0
 	s.lease.Pending(len(p))
 	defer s.lease.Pending(-len(p))
+	started := time.Now()
+	chunks := 0
+	defer func() {
+		if chunks != 0 {
+			s.lease.ObserveWrite(time.Since(started) / time.Duration(chunks))
+		}
+	}()
 	for len(p) > 0 {
 		next := min(len(p), 32<<10)
 		if s.Pace != nil {
 			s.Pace(next)
 		}
-		started := time.Now()
 		n, err := s.ClientStream.Write(p[:next])
-		s.lease.ObserveWrite(time.Since(started))
+		chunks++
 		written += n
 		p = p[n:]
 		if err != nil {
