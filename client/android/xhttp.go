@@ -18,6 +18,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"strconv"
 	"strings"
@@ -71,7 +72,9 @@ func getXHTTPTransport(cfg *Config) (*xhttppool.Lease, error) {
 		tr := &http2.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string, tlsConfig *tls.Config) (net.Conn, error) {
 				// Connect directly via Reality TLS 1.3 channel (XHTTP over Reality)
-				secureConn, err := dialRealityConn(cfg)
+				dialConfig := *cfg
+				dialConfig.runCtx = ctx
+				secureConn, err := dialRealityConn(&dialConfig)
 				if err != nil {
 					return nil, fmt.Errorf("reality TLS handshake for XHTTP failed: %w", err)
 				}
@@ -83,6 +86,7 @@ func getXHTTPTransport(cfg *Config) (*xhttppool.Lease, error) {
 			AllowHTTP:                  true,
 			ReadIdleTimeout:            20 * time.Second,
 			PingTimeout:                5 * time.Second,
+			WriteByteTimeout:           25 * time.Second,
 			IdleConnTimeout:            90 * time.Second,
 			StrictMaxConcurrentStreams: false,
 		}
@@ -171,31 +175,6 @@ func buildStealthPreamble(pbk, user, network, destAddr string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-type lazyHTTP2Reader struct {
-	ready chan struct{}
-	body  io.ReadCloser
-	err   error
-}
-
-func (l *lazyHTTP2Reader) Read(p []byte) (int, error) {
-	<-l.ready
-	if l.err != nil {
-		return 0, l.err
-	}
-	return l.body.Read(p)
-}
-
-func (l *lazyHTTP2Reader) Close() error {
-	select {
-	case <-l.ready:
-		if l.body != nil {
-			return l.body.Close()
-		}
-	default:
-	}
-	return nil
-}
-
 func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
 	lease, err := getXHTTPTransport(cfg)
 	if err != nil {
@@ -207,7 +186,6 @@ func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
 			lease.Release()
 		}
 	}()
-	tr := lease.Transport()
 	pr, pw := io.Pipe()
 
 	tcpProtoMu.RLock()
@@ -223,11 +201,14 @@ func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
 		return nil, fmt.Errorf("build XHTTP preamble failed: %w", err)
 	}
 
-	bodyStream := io.MultiReader(bytes.NewReader(preamble), pr)
-	reqCtx, reqCancel := context.WithCancel(cfg.context())
+	bodyStream := struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(preamble), pr), pr}
+	reqCtx, reqCancel := context.WithCancelCause(cfg.context())
 	req, err := http.NewRequestWithContext(reqCtx, "POST", targetURL, bodyStream)
 	if err != nil {
-		reqCancel()
+		reqCancel(err)
 		pr.Close()
 		pw.Close()
 		return nil, err
@@ -241,36 +222,23 @@ func dialXHTTPStream(cfg *Config, network, destAddr string) (net.Conn, error) {
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
 
-	lazyR := &lazyHTTP2Reader{
-		ready: make(chan struct{}),
+	var remoteAddr net.Addr
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { remoteAddr = info.Conn.RemoteAddr() },
+	}))
+	resp, err := lease.Open(req, reqCancel)
+	if err != nil {
+		_ = pr.CloseWithError(err)
+		_ = pw.CloseWithError(err)
+		return nil, err
 	}
-
-	go func(usedTr *http2.Transport) {
-		defer close(lazyR.ready)
-		resp, rtErr := usedTr.RoundTrip(req)
-		if rtErr != nil {
-			// If transport failed — invalidate only this slot in pool
-			lazyR.err = fmt.Errorf("XHTTP stream RoundTrip failed: %w", rtErr)
-			_ = pr.CloseWithError(lazyR.err)
-			return
-		}
-		if resp.StatusCode != http.StatusOK {
-			_ = resp.Body.Close()
-			lazyR.err = fmt.Errorf("XHTTP stream server returned status: %d %s", resp.StatusCode, resp.Status)
-			_ = pr.CloseWithError(lazyR.err)
-			return
-		}
-		lazyR.body = resp.Body
-	}(tr)
-
-	remoteAddr, _ := net.ResolveTCPAddr("tcp", cfg.ServerAddr)
 	owned = true
 	return &http2DuplexConn{
 		lease:      lease,
-		reader:     lazyR,
+		reader:     resp.Body,
 		writer:     pw,
 		closer:     pw,
-		cancel:     reqCancel,
+		cancel:     func() { reqCancel(nil) },
 		remoteAddr: remoteAddr,
 		localAddr:  &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1080},
 		closed:     make(chan struct{}),

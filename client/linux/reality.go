@@ -282,11 +282,15 @@ func startChaffingWorker(ctx context.Context, cfg *Config) {
 }
 
 func dialServer(addr string) (net.Conn, error) {
+	return dialServerContext(context.Background(), addr)
+}
+
+func dialServerContext(ctx context.Context, addr string) (net.Conn, error) {
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	return dialer.Dial("tcp", addr)
+	return dialer.DialContext(ctx, "tcp", addr)
 }
 
 func buildEncryptedClientFinished(cipherSuite uint16, clientHandshakeKey, clientHandshakeIV, cFinKey []byte, transcriptHash []byte) ([]byte, error) {
@@ -585,6 +589,10 @@ func parseServerHello(record []byte) (serverPubKey []byte, handshakeMsg []byte, 
 }
 
 func dialRealityConn(cfg *Config) (net.Conn, error) {
+	return dialRealityConnContext(context.Background(), cfg)
+}
+
+func dialRealityConnContext(ctx context.Context, cfg *Config) (net.Conn, error) {
 	servers := []string{cfg.ServerAddr}
 	servers = append(servers, cfg.BackupServers...)
 
@@ -598,20 +606,31 @@ func dialRealityConn(cfg *Config) (net.Conn, error) {
 		}
 
 		for attempt := 0; attempt < maxRetries; attempt++ {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			lastErr = nil
 			if attempt > 0 {
 				delay := baseDelay * time.Duration(1<<uint(attempt-1))
 				if delay > 8*time.Second {
 					delay = 8 * time.Second
 				}
-				time.Sleep(delay)
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+				}
 			}
 
-			rawConn, err := dialServer(serverAddr)
+			rawConn, err := dialServerContext(ctx, serverAddr)
 			if err != nil {
 				lastErr = err
 				continue
 			}
+			stopCancel := context.AfterFunc(ctx, func() { _ = rawConn.Close() })
+			defer stopCancel()
 
 			if tcpConn, ok := rawConn.(*net.TCPConn); ok {
 				_ = tcpConn.SetNoDelay(true)
@@ -867,6 +886,11 @@ func dialRealityConn(cfg *Config) (net.Conn, error) {
 			}
 			rawConn.SetDeadline(time.Time{})
 			setActiveServer(serverAddr)
+			stopCancel()
+			if err := ctx.Err(); err != nil {
+				_ = rawConn.Close()
+				return nil, err
+			}
 			return secureConn, nil
 		}
 	}

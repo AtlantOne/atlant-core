@@ -436,6 +436,7 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 	h2Server := &http2.Server{
 		MaxConcurrentStreams: 250,
 		MaxReadFrameSize:     16384,
+		WriteByteTimeout:     25 * time.Second,
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -652,7 +653,7 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 		}
 
 		// Standard TCP over XHTTP stream
-		targetConn, err := safeDialTCP(dest, 10*time.Second)
+		targetConn, err := safeDialTCPContext(r.Context(), dest, 10*time.Second)
 		if err != nil {
 			log.Printf("[XHTTP] Blocked or failed to dial %s: %v", dest, err)
 			http.Error(w, "Dial blocked or failed: "+err.Error(), http.StatusForbidden)
@@ -727,7 +728,6 @@ func handleBoundXHTTPServer(tlsConn net.Conn, path string, legacyPath bool, oute
 			fw := &flushWriter{w: w, f: flusher}
 			buf := make([]byte, 32768)
 			for {
-				_ = targetConn.SetReadDeadline(time.Now().Add(120 * time.Second))
 				n, rErr := targetConn.Read(buf)
 				if n > 0 {
 					if !recordUserTraffic(user, 0, uint64(n)) {

@@ -16,7 +16,7 @@ import (
 
 const MaxCarriers = 8
 
-var ErrBusy = errors.New("XHTTP carrier pool is occupied by another profile")
+var ErrBusy = errors.New("XHTTP carrier pool has no available slots")
 
 type carrier struct {
 	key       [32]byte
@@ -57,7 +57,7 @@ func (p *Pool) Acquire(key [32]byte, create func() *http2.Transport) (*Lease, er
 	now := time.Now()
 	kept := p.entries[:0]
 	for _, entry := range p.entries {
-		if entry.active == 0 && (entry.key != key || now.Sub(entry.lastUsed) > 90*time.Second) {
+		if entry.active == 0 && (entry.retired || entry.key != key || now.Sub(entry.lastUsed) > 90*time.Second) {
 			entry.retired = true
 			entry.transport.CloseIdleConnections()
 			continue
@@ -66,7 +66,12 @@ func (p *Pool) Acquire(key [32]byte, create func() *http2.Transport) (*Lease, er
 	}
 	p.entries = kept
 	var best *carrier
+	selectable := 0
 	for _, entry := range p.entries {
+		if entry.retired {
+			continue
+		}
+		selectable++
 		if entry.key != key {
 			continue
 		}
@@ -76,7 +81,7 @@ func (p *Pool) Acquire(key [32]byte, create func() *http2.Transport) (*Lease, er
 	}
 	// A new logical stream should not sit behind a saturated upload while an
 	// independent carrier can still be opened. Do not create an unbounded pool.
-	if (best == nil || best.active > 0) && len(p.entries) < MaxCarriers {
+	if (best == nil || best.active > 0) && selectable < MaxCarriers && len(p.entries) < 2*MaxCarriers {
 		best = &carrier{key: key, transport: create(), lastUsed: now}
 		p.entries = append(p.entries, best)
 	}
@@ -88,6 +93,15 @@ func (p *Pool) Acquire(key [32]byte, create func() *http2.Transport) (*Lease, er
 }
 
 func (l *Lease) Transport() *http2.Transport { return l.entry.transport }
+
+// Retire stops new assignments while existing streams finish. The pool
+// permits up to MaxCarriers extra slots while retired carriers drain.
+func (l *Lease) Retire() {
+	l.pool.mu.Lock()
+	l.entry.retired = true
+	l.pool.mu.Unlock()
+	l.entry.transport.CloseIdleConnections()
+}
 func (l *Lease) Pending(n int) {
 	if l != nil {
 		l.entry.pending.Add(int64(n))

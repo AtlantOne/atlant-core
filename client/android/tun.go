@@ -546,7 +546,7 @@ func dialTCPVPN(cfg *Config, destAddr string) (net.Conn, error) {
 		if err == nil {
 			return conn, nil
 		}
-		if !IsAutoFallbackEnabled() {
+		if cfg.context().Err() != nil || !IsAutoFallbackEnabled() {
 			return nil, err
 		}
 		log.Printf("[TCP-VPN] QUIC stream failed (%v), falling back to direct Reality", err)
@@ -556,7 +556,7 @@ func dialTCPVPN(cfg *Config, destAddr string) (net.Conn, error) {
 		if err == nil {
 			return conn, nil
 		}
-		if !IsAutoFallbackEnabled() {
+		if cfg.context().Err() != nil || !IsAutoFallbackEnabled() {
 			return nil, err
 		}
 		log.Printf("[TCP-VPN] XHTTP stream failed (%v), falling back to direct Reality", err)

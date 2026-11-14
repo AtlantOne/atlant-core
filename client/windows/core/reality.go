@@ -153,13 +153,17 @@ func dialRemoteRealityStream(cfg *Config, network, addr string) (result net.Conn
 }
 
 func dialServer(cfg *Config, serverAddr string) (net.Conn, error) {
+	return dialServerContext(context.Background(), cfg, serverAddr)
+}
+
+func dialServerContext(ctx context.Context, cfg *Config, serverAddr string) (net.Conn, error) {
 	if physicalLocalIP != nil {
 		dialer := &net.Dialer{
 			LocalAddr: &net.TCPAddr{IP: physicalLocalIP},
 			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}
-		conn, err := dialer.Dial("tcp", serverAddr)
+		conn, err := dialer.DialContext(ctx, "tcp", serverAddr)
 		if err == nil {
 			return conn, nil
 		}
@@ -170,7 +174,7 @@ func dialServer(cfg *Config, serverAddr string) (net.Conn, error) {
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	return dialer.Dial("tcp", serverAddr)
+	return dialer.DialContext(ctx, "tcp", serverAddr)
 }
 
 type http2DuplexConn struct {
@@ -975,6 +979,10 @@ func getSession(cfg *Config) (_ *yamux.Session, err error) {
 
 // dialRealityConn authenticates a REALITY peer and returns the encrypted stream.
 func dialRealityConn(cfg *Config) (net.Conn, error) {
+	return dialRealityConnContext(context.Background(), cfg)
+}
+
+func dialRealityConnContext(ctx context.Context, cfg *Config) (net.Conn, error) {
 	// Prepare list of servers to try (primary + backups)
 	servers := []string{cfg.ServerAddr}
 	servers = append(servers, cfg.BackupServers...)
@@ -989,6 +997,9 @@ func dialRealityConn(cfg *Config) (net.Conn, error) {
 		}
 
 		for attempt := 0; attempt < maxRetries; attempt++ {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			lastErr = nil
 			if attempt > 0 {
 				delay := baseDelay * time.Duration(1<<uint(attempt-1))
@@ -996,18 +1007,26 @@ func dialRealityConn(cfg *Config) (net.Conn, error) {
 					delay = 8 * time.Second
 				}
 				log.Printf("[REALITY] Retrying connection to %s after %v (attempt %d/%d)", serverAddr, delay, attempt+1, maxRetries)
-				time.Sleep(delay)
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+				}
 			}
 
 			log.Printf("[REALITY] Dialing %s (SNI: %s)", serverAddr, cfg.SNI)
 
-			rawConn, err := dialServer(cfg, serverAddr)
+			rawConn, err := dialServerContext(ctx, cfg, serverAddr)
 			if err != nil {
 				lastErr = err
 				log.Printf("[REALITY] TCP dial error to %s (attempt %d): %v", serverAddr, attempt+1, err)
 				continue
 			}
 			log.Printf("[NET] TCP connected: local=%s remote=%s", rawConn.LocalAddr(), rawConn.RemoteAddr())
+			stopCancel := context.AfterFunc(ctx, func() { _ = rawConn.Close() })
+			defer stopCancel()
 
 			// Set TCP options for better reliability & maximum throughput
 			if tcpConn, ok := rawConn.(*net.TCPConn); ok {
@@ -1295,6 +1314,11 @@ func dialRealityConn(cfg *Config) (net.Conn, error) {
 
 			setActiveServer(serverAddr)
 			log.Printf("[REALITY] Full TLS 1.3 Genuine Cryptographic Handshake completed with %s (Mutual AEAD Verified)", serverAddr)
+			stopCancel()
+			if err := ctx.Err(); err != nil {
+				_ = rawConn.Close()
+				return nil, err
+			}
 			return secureConn, nil
 		}
 	}
