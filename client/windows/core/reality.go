@@ -954,7 +954,7 @@ func getSession(cfg *Config) (_ *yamux.Session, err error) {
 	}
 
 	yCfg := yamux.DefaultConfig()
-	yCfg.KeepAliveInterval = 25*time.Second + time.Duration(time.Now().UnixNano()%20)*time.Second
+	yCfg.KeepAliveInterval = wire.ProbeInterval(25*time.Second, 44*time.Second)
 	yCfg.ConnectionWriteTimeout = 30 * time.Second
 	yCfg.StreamOpenTimeout = 10 * time.Second
 	yCfg.MaxStreamWindowSize = 16 * 1024 * 1024 // 16MB window for unthrottled gigabit speed

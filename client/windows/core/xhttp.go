@@ -1,6 +1,7 @@
 package main
 
 import (
+	"atlant.local/protocol/wire"
 	"atlant.local/protocol/xhttppool"
 	"bytes"
 	"context"
@@ -37,7 +38,7 @@ func getXHTTPTransport(cfg *Config) (*xhttppool.Lease, error) {
 				return secureConn, nil
 			},
 			AllowHTTP:                  true,
-			ReadIdleTimeout:            20 * time.Second,
+			ReadIdleTimeout:            wire.ProbeInterval(16*time.Second, 20*time.Second),
 			PingTimeout:                5 * time.Second,
 			WriteByteTimeout:           25 * time.Second,
 			IdleConnTimeout:            90 * time.Second,

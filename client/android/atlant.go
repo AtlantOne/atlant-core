@@ -121,7 +121,7 @@ func NotifyNetworkChanged() {
 	cfg := activeConfig
 	running := isRunning
 	mu.Unlock()
-	if running && cfg != nil && (GetTCPProto() == "quic" || cfg.UDPMode != "tcp") {
+	if running && cfg != nil && cfg.Transport == "quic" {
 		go prepareQUICSession(cfg)
 	}
 }
@@ -433,7 +433,7 @@ func StartVPNWithUser(server, sni, pbk, user, serverPubKey, udpMode, tunAddr str
 	activeConfig = cfg
 	mu.Unlock()
 	var quicReady <-chan error
-	if cfg.Transport == "quic" || cfg.UDPMode != "tcp" {
+	if cfg.Transport == "quic" {
 		ready := make(chan error, 1)
 		quicReady = ready
 		go func() { ready <- prepareQUICSession(cfg) }()

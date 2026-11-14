@@ -231,7 +231,7 @@ func getYamuxSession(cfg *Config) (_ *yamux.Session, err error) {
 
 	yConfig := yamux.DefaultConfig()
 	yConfig.EnableKeepAlive = true
-	yConfig.KeepAliveInterval = 15 * time.Second
+	yConfig.KeepAliveInterval = wire.ProbeInterval(12*time.Second, 15*time.Second)
 	yConfig.ConnectionWriteTimeout = 10 * time.Second
 	yConfig.StreamOpenTimeout = 10 * time.Second
 	yConfig.MaxStreamWindowSize = 16 * 1024 * 1024

@@ -3,6 +3,7 @@ package quicpeer
 import (
 	"time"
 
+	"atlant.local/protocol/wire"
 	"github.com/quic-go/quic-go"
 )
 
@@ -13,7 +14,7 @@ func ClientConfig() *quic.Config {
 	return &quic.Config{
 		MaxIdleTimeout:                 30 * time.Second,
 		EnableDatagrams:                true,
-		KeepAlivePeriod:                10 * time.Second,
+		KeepAlivePeriod:                wire.ProbeInterval(8*time.Second, 10*time.Second),
 		InitialStreamReceiveWindow:     8 * 1024 * 1024,
 		MaxStreamReceiveWindow:         32 * 1024 * 1024,
 		InitialConnectionReceiveWindow: 16 * 1024 * 1024,

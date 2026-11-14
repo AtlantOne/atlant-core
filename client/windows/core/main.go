@@ -706,7 +706,7 @@ func main() {
 		}
 	}
 
-	// Session health checker & Chaffing background noise
+	// Prepare QUIC when the selected routing policy needs it.
 	if !cfg.Tun || amAdmin() {
 		prepare := func() {
 			if _, err := getOrDialQUICClient(cfg); err != nil {
@@ -715,11 +715,8 @@ func main() {
 		}
 		if cfg.Transport == "quic" || cfg.TCPProto == "quic" {
 			prepare()
-		} else if cfg.UDPProto == "quic" && cfg.TrafficMode != "tcp" {
-			go prepare()
 		}
 	}
-	go sessionHealthChecker()
 	go startChaffingWorker(cfg)
 
 	if cfg.Tun {
@@ -730,36 +727,6 @@ func main() {
 	} else {
 		// SOCKS5 proxy mode
 		serveSocks5(socksServer, socksListener)
-	}
-}
-
-func sessionHealthChecker() {
-	ticker := time.NewTicker(2 * time.Minute)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		var sessToPing *yamux.Session
-		mu.Lock()
-		if activeCfg != nil && activeCfg.Mux && session != nil && !session.IsClosed() {
-			if time.Since(lastConnectTime) > 5*time.Minute {
-				sessToPing = session
-			}
-		}
-		mu.Unlock()
-
-		if sessToPing != nil {
-			if _, err := sessToPing.Ping(); err != nil {
-				log.Printf("[HEALTH] Yamux session ping failed (%v), marking session dead", err)
-				mu.Lock()
-				if session == sessToPing {
-					sessToPing.Close()
-					session = nil
-					sessionDead = true
-					sessionCond.Broadcast()
-				}
-				mu.Unlock()
-			}
-		}
 	}
 }
 
